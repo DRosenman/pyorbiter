@@ -2,6 +2,7 @@ shiny>=1.0
 numpy>=1.24
 pandas>=2.0
 matplotlib>=3.7
-# Until pyorbiter is on PyPI, install it from the repository root (pip install -e .)
-# or replace the next line with a git URL when deploying.
-pyorbiter
+# pyorbiter is not on PyPI yet, so hosted deployments (shinyapps.io) install it
+# from GitHub. For local work, install it from the repository root instead:
+# pip install -e .
+pyorbiter @ git+https://github.com/DRosenman/pyorbiter.git

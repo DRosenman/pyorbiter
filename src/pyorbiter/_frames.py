@@ -29,12 +29,14 @@ def set_backend(backend: str) -> None:
 
     This sets the default for :func:`simulate_system` and :func:`get_bodies`;
     both also take a ``backend`` argument for a single call. Functions that
-    are *given* a DataFrame always return the same kind they were given.
+    are *given* a DataFrame always return the same kind they were given (a
+    polars LazyFrame is collected, and a polars DataFrame comes back).
     """
     global _default_backend
-    _default_backend = _check_backend(backend)
-    if _default_backend == "polars":
-        _polars()
+    backend = _check_backend(backend)
+    if backend == "polars":
+        _polars()   # fail here, before switching, if polars is missing
+    _default_backend = backend
 
 
 def get_backend() -> str:
@@ -50,7 +52,10 @@ def _check_backend(backend) -> str:
 
 def resolve_backend(backend: str | None) -> str:
     """An explicit backend, else the default set by :func:`set_backend`."""
-    return _default_backend if backend is None else _check_backend(backend)
+    backend = _default_backend if backend is None else _check_backend(backend)
+    if backend == "polars":
+        _polars()
+    return backend
 
 
 def _polars():
@@ -98,11 +103,14 @@ def to_polars(frame: pd.DataFrame):
     for name in frame.columns:
         values = frame[name].to_numpy()
         if values.dtype == object:
-            # Text columns (body ids) come out of pandas as object arrays
+            # Text columns (body ids) come out of pandas as object arrays, with
+            # NaN for a missing value where polars wants null
+            items = [None if missing else value
+                     for value, missing in zip(values.tolist(), frame[name].isna().tolist())]
             try:
-                columns[str(name)] = pl.Series(str(name), values.tolist(), dtype=pl.String)
+                columns[str(name)] = pl.Series(str(name), items, dtype=pl.String)
             except (TypeError, ValueError, pl.exceptions.PolarsError):
-                columns[str(name)] = pl.Series(str(name), values.tolist())
+                columns[str(name)] = pl.Series(str(name), items, strict=False)
         else:
             columns[str(name)] = pl.Series(str(name), np.ascontiguousarray(values))
     out = pl.DataFrame(columns)
@@ -129,9 +137,14 @@ def run_settings(sim_data) -> dict:
     A dict with ``G``, ``softening``, ``method`` and ``time_step`` for the
     output of :func:`simulate_system`, :func:`continue_simulation` or
     :func:`shift_reference_frame`. For a pandas DataFrame this is a copy of
-    ``sim_data.attrs``. It is empty for a frame that pyorbiter did not
-    produce itself, such as one you filtered, joined or read from a file; in
-    that case pass ``G`` and ``softening`` to the analysis functions directly.
+    ``sim_data.attrs``, which pandas carries through most operations.
+
+    A polars DataFrame has nowhere to keep them, so they are remembered only
+    for the exact DataFrame pyorbiter returned. Anything you derive from it
+    (``filter``, ``sort``, ``with_columns``, ``clone``, a file read back)
+    gives an empty dict here. For a run that did not use the defaults, pass
+    ``G`` and ``softening`` to the analysis functions, and ``G``, ``softening``
+    and ``method`` to :func:`continue_simulation`, yourself.
     """
     if isinstance(sim_data, pd.DataFrame):
         return dict(sim_data.attrs)
@@ -141,17 +154,68 @@ def run_settings(sim_data) -> dict:
     return dict(entry[1])
 
 
+# The columns pyorbiter computes with. Anything else in a polars frame is the
+# user's own and never leaves polars.
+_CORE_COLUMNS = ("id", "mass", "x", "y", "z", "vx", "vy", "vz", "time")
+_ROW = "__pyorbiter_row__"
+
+
+def _core_to_pandas(frame, settings: dict) -> pd.DataFrame:
+    """The columns pyorbiter uses, as pandas, with each row's position in ``frame``."""
+    core = [name for name in frame.columns if name in _CORE_COLUMNS]
+    out = pd.DataFrame({name: frame[name].to_numpy() for name in core})
+    out[_ROW] = np.arange(frame.height, dtype=float)
+    out.attrs = settings
+    return out
+
+
+def _rows_to_polars(result: pd.DataFrame, original):
+    """Turn a result made of rows of ``original`` back into polars.
+
+    The user's own columns are picked up again from ``original`` by row, so
+    they keep their polars types exactly; rows pyorbiter added (as
+    :func:`continue_simulation` does) get nulls there. The columns pyorbiter
+    did compute are cast back to the types they arrived with.
+    """
+    pl = _polars()
+    out = to_polars(result)
+    out = out.with_columns(pl.col(_ROW).fill_nan(None).cast(pl.Int64))
+    extras = [name for name in original.columns if name not in result.columns]
+    if extras:
+        lookup = original.select(extras).with_columns(
+            pl.int_range(pl.len(), dtype=pl.Int64).alias(_ROW))
+        out = out.join(lookup, on=_ROW, how="left", maintain_order="left")
+    ordered = [name for name in original.columns if name in out.columns]
+    out = out.select(ordered + [name for name in out.columns
+                                if name not in ordered and name != _ROW])
+    for name, dtype in original.schema.items():
+        if name in out.columns and out.schema[name] != dtype:
+            try:
+                out = out.with_columns(pl.col(name).cast(dtype))
+            except pl.exceptions.PolarsError:
+                pass   # keep the computed type rather than fail
+    _record_run_settings(out, result.attrs)
+    return out
+
+
 def accepts_frames(func):
     """Let a function written for pandas take a polars frame as its first argument.
 
-    A polars DataFrame or LazyFrame is converted on the way in, and a
-    DataFrame result is converted back to polars on the way out. pandas input
-    is passed straight through.
+    A polars DataFrame (or LazyFrame, which is collected) is converted on the
+    way in, and a DataFrame result is converted back to a polars DataFrame on
+    the way out. pandas input is passed straight through.
     """
     @functools.wraps(func)
     def wrapper(sim_data, *args, **kwargs):
-        if _polars_kind(sim_data) is None:
+        kind = _polars_kind(sim_data)
+        if kind is None:
             return func(sim_data, *args, **kwargs)
-        out = func(to_pandas(sim_data), *args, **kwargs)
-        return to_polars(out) if isinstance(out, pd.DataFrame) else out
+        settings = run_settings(sim_data)
+        original = sim_data.collect() if kind == "LazyFrame" else sim_data
+        out = func(_core_to_pandas(original, settings), *args, **kwargs)
+        if not isinstance(out, pd.DataFrame):
+            return out
+        if _ROW in out.columns:
+            return _rows_to_polars(out, original)
+        return to_polars(out)
     return wrapper

@@ -582,7 +582,8 @@ def server(input, output, session):
                 progress.set(0.5, message="Simulating...")
                 result = build_system(scenario).simulate(
                     time_step=STEP_SECONDS[input.time_step_choice()],
-                    duration=days * DAY, method=input.method())
+                    duration=days * DAY, method=input.method(),
+                    backend="pandas")  # the app's own tables and plots use pandas
         except Exception as err:  # show the reason instead of a broken page
             raw_sim.set(None)
             sim_error.set(f"The simulation could not run: {err}")

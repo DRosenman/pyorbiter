@@ -71,9 +71,9 @@ sim = solar.simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_ye
 energy = orb.get_energy(sim)                                                           # also polars
 ```
 
-Or ask for it in a single call with `backend="polars"` on `simulate()`, `simulate_system()`, or `get_bodies()`. Every function that takes a simulation (analysis, plotting, `continue_simulation()`) accepts either kind and returns the kind it was given, so the two can be mixed freely.
+Or ask for it in a single call with `backend="polars"` on `simulate()`, `simulate_system()`, or `get_bodies()`. Every function that takes a simulation (analysis, plotting, `continue_simulation()`) accepts either kind and returns the kind it was given, so the two can be mixed freely. A polars `LazyFrame` is accepted too; it is collected, and a polars `DataFrame` comes back. Columns of your own that you add to a polars simulation are carried through untouched.
 
-A polars DataFrame has no `.attrs`, so pyorbiter remembers the run's settings for the exact DataFrame it returned; `orb.run_settings(sim)` shows them. A frame you derive yourself (`sim.filter(...)`, a join, a file you read back) no longer carries them, so pass `G` and `softening` to the analysis functions explicitly if the run did not use the defaults.
+A polars DataFrame has no `.attrs`, so pyorbiter remembers the run's settings for the exact DataFrame it returned; `orb.run_settings(sim)` shows them. A frame you derive yourself (`sim.filter(...)`, `sort`, `with_columns`, a join, a file you read back) no longer carries them. If the run did not use the defaults, pass `G` and `softening` to the analysis functions, and `G`, `softening`, and `method` to `continue_simulation()`, explicitly. (pandas keeps `.attrs` through most of those operations, so this only matters for polars.)
 
 ### Analyze
 

@@ -12,7 +12,7 @@ from typing import Iterable
 import pandas as pd
 
 from . import constants as c
-from ._frames import to_backend
+from ._frames import to_backend, to_pandas
 
 BODY_COLUMNS = ["id", "mass", "x", "y", "z", "vx", "vy", "vz"]
 SIM_COLUMNS = BODY_COLUMNS + ["time"]
@@ -57,7 +57,7 @@ class OrbitSystem:
 
     def __init__(self, G: float = c.gravitational_constant, bodies: pd.DataFrame | None = None):
         self.G = G
-        self._bodies = _empty_bodies() if bodies is None else bodies
+        self._bodies = _empty_bodies() if bodies is None else to_pandas(bodies)
 
     # ---- inspection -----------------------------------------------------
 

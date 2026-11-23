@@ -229,3 +229,100 @@ def test_plots_accept_polars(sim_pl, tmp_path):
     assert len(orb.plot_orbits_3d(sim_pl).data) == 3
     assert orb.plot_system_3d(sim_pl, time=10 * DAY) is not None
     assert orb.animate_system_3d(sim_pl, fps=2, duration=2) is not None
+
+    anim = orb.animate_system(sim_pl, fps=2, duration=2, three_d=False)
+    assert anim is not None
+    plt.close("all")
+    pytest.importorskip("PIL")
+    orb.animate_system(sim_pl, fps=2, duration=1, three_d=False, path=tmp_path / "orbit.gif")
+    assert (tmp_path / "orbit.gif").stat().st_size > 0
+    plt.close("all")
+
+
+# ---- Your own columns ------------------------------------------------------
+
+@pytest.fixture
+def annotated(sim_pl):
+    """A simulation carrying columns pyorbiter knows nothing about."""
+    return sim_pl.with_columns(
+        label=pl.when(pl.col("id") == "Sun").then(pl.lit("star")).otherwise(None),
+        kind=pl.col("id").cast(pl.Categorical),
+        day=pl.date(2020, 1, 1),
+        count=pl.when(pl.col("id") == "Earth").then(None).otherwise(pl.lit(7, dtype=pl.Int32)),
+        pair=pl.struct(a=pl.col("x"), b=pl.col("id")),
+    )
+
+
+def test_extra_columns_survive(annotated, sim_pl):
+    shifted = orb.shift_reference_frame(annotated, "Earth")
+    assert shifted.columns == annotated.columns
+    assert shifted.schema == annotated.schema
+    extras = ["label", "kind", "day", "count", "pair"]
+    assert shifted.select(extras).equals(annotated.select(extras))
+    assert shifted.select(sim_pl.columns).equals(orb.shift_reference_frame(sim_pl, "Earth"))
+
+    dropped = orb.shift_reference_frame(annotated, "Earth", keep_center=False)
+    kept = annotated.filter(pl.col("id") != "Earth")
+    assert dropped.select(extras).equals(kept.select(extras))
+
+    # functions that build a new table are not bothered by them
+    assert orb.get_energy(annotated).equals(orb.get_energy(sim_pl))
+    orb.plot_orbits(annotated, three_d=False)
+
+
+def test_extra_columns_are_null_on_continued_rows(annotated, sim_pl):
+    longer = orb.continue_simulation(annotated, time_step=DAY, duration=5 * DAY)
+    plain = orb.continue_simulation(sim_pl, time_step=DAY, duration=5 * DAY)
+    assert longer.schema == annotated.schema
+    assert longer.select(sim_pl.columns).equals(plain)
+    old, new = longer.head(annotated.height), longer.tail(longer.height - annotated.height)
+    assert old.equals(annotated)
+    assert new.height == 3 * 5
+    assert new.select(pl.col("label", "kind", "day", "count").is_null().all()).row(0) == (True,) * 4
+
+
+def test_input_types_are_kept(sim_pl):
+    """Rows handed back keep the types they arrived with."""
+    odd = sim_pl.with_columns(pl.col("id").cast(pl.Categorical), pl.col("mass").cast(pl.Float32))
+    assert orb.shift_reference_frame(odd, "Earth").schema == odd.schema
+
+
+def test_null_text_does_not_break_conversion():
+    from pyorbiter import _frames
+
+    frame = pd.DataFrame({"id": ["Sun", None, "Earth"], "mass": [1.0, 2.0, 3.0]})
+    assert _frames.to_polars(frame)["id"].to_list() == ["Sun", None, "Earth"]
+
+
+# ---- Edge cases ------------------------------------------------------------
+
+def test_system_from_a_polars_body_table(system):
+    orb.set_backend("polars")
+    copy = orb.OrbitSystem(G=system.G, bodies=system.bodies)
+    assert isinstance(system.bodies, pl.DataFrame)
+    assert isinstance(orb.get_bodies(system), pl.DataFrame)
+    assert isinstance(system.get_bodies(), pl.DataFrame)
+    assert "Earth" in repr(copy)
+    assert len(copy.add_body("Probe", mass=1.0, x=1e9)) == 4
+    assert_same(copy.simulate(time_step=DAY, duration=DAY),
+                system.simulate(time_step=DAY, duration=DAY, backend="pandas"))
+
+
+def test_empty_simulation_keeps_numeric_columns(sim_pl):
+    energy = orb.get_energy(sim_pl.clear())
+    assert energy.height == 0
+    assert all(dtype == pl.Float64 for dtype in energy.schema.values())
+
+
+def test_missing_polars_is_reported_and_changes_nothing(system, monkeypatch):
+    import sys
+
+    for name in [name for name in sys.modules if name == "polars" or name.startswith("polars.")]:
+        monkeypatch.setitem(sys.modules, name, None)
+    with pytest.raises(ImportError, match=r"pyorbiter\[polars\]"):
+        orb.set_backend("polars")
+    assert orb.get_backend() == "pandas"
+    with pytest.raises(ImportError, match=r"pyorbiter\[polars\]"):
+        system.simulate(time_step=DAY, duration=DAY, backend="polars")
+    assert isinstance(system.simulate(time_step=DAY, duration=DAY), pd.DataFrame)
+    assert isinstance(system.bodies, pd.DataFrame)

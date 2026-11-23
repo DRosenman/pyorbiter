@@ -153,7 +153,7 @@ def _potential(sim_data: pd.DataFrame, G: float, softening: float) -> pd.Series:
         pos = group[["x", "y", "z"]].to_numpy(dtype=float)[None]
         with np.errstate(divide="ignore"):
             values.append(pairs(pos, group["mass"].to_numpy(dtype=float)[None])[0])
-    return pd.Series(values, index=times)
+    return pd.Series(values, index=times, dtype=float)
 
 
 @accepts_frames
