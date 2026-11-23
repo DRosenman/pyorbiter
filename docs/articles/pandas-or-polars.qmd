@@ -18,7 +18,7 @@ This article covers how to choose, what stays the same, and the one place where 
 pandas is installed with `pyorbiter`. polars is optional and comes with the `polars` extra:
 
 ```bash
-pip install "pyorbiter[polars] @ git+https://github.com/DRosenman/pyorbiter.git"
+pip install "pyorbiter[polars]"
 ```
 
 If you already have polars installed, there is nothing more to do.

@@ -1,0 +1,71 @@
+# Run the test suite on the Python versions pyorbiter supports, including one
+# job pinned to the oldest dependency versions that pyproject.toml allows.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Python 3.10, oldest supported dependencies"
+            os: ubuntu-latest
+            python: "3.10"
+            pins: "numpy==1.24.* pandas==2.0.* matplotlib==3.7.* polars==1.0.* plotly==5.* pillow==9.*"
+          - name: "Python 3.11, pandas 2"
+            os: ubuntu-latest
+            python: "3.11"
+            pins: "pandas==2.2.*"
+          - name: "Python 3.12"
+            os: ubuntu-latest
+            python: "3.12"
+            pins: ""
+          - name: "Python 3.13"
+            os: ubuntu-latest
+            python: "3.13"
+            pins: ""
+          - name: "Python 3.14"
+            os: ubuntu-latest
+            python: "3.14"
+            pins: ""
+          - name: "Python 3.12, Windows"
+            os: windows-latest
+            python: "3.12"
+            pins: ""
+          - name: "Python 3.12, no optional packages"
+            os: ubuntu-latest
+            python: "3.12"
+            pins: ""
+            minimal: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install pyorbiter with every optional package
+        if: ${{ !matrix.minimal }}
+        run: pip install ".[dev]" ${{ matrix.pins }}
+
+      - name: Install pyorbiter alone
+        if: ${{ matrix.minimal }}
+        run: pip install . pytest
+
+      - name: Show installed versions
+        run: pip list
+
+      - name: Run the tests
+        run: pytest -q

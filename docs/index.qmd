@@ -16,16 +16,16 @@ Units are SI throughout: meters, kilograms, seconds. Angles are in degrees.
 
 ## Installation
 
-`pyorbiter` is not on PyPI yet. Install it from GitHub:
+Install it from PyPI:
 
 ```bash
-pip install "git+https://github.com/DRosenman/pyorbiter.git"
+pip install pyorbiter
 ```
 
 It needs Python 3.10 or later, and installs numpy, pandas, and matplotlib. Three optional extras add interactive 3D plots (plotly), polars DataFrames, and GIF export (pillow):
 
 ```bash
-pip install "pyorbiter[plotly,polars,gif] @ git+https://github.com/DRosenman/pyorbiter.git"
+pip install "pyorbiter[plotly,polars,gif]"
 ```
 
 ## A few lines to an orbit

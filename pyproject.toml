@@ -13,7 +13,15 @@ authors = [{ name = "Dave Rosenman" }]
 requires-python = ">=3.10"
 keywords = ["orbital mechanics", "n-body", "physics", "simulation", "astronomy"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
     "Topic :: Scientific/Engineering :: Astronomy",
@@ -39,12 +47,19 @@ dev = ["pytest>=7.0", "plotly>=5.0", "pillow>=9.0", "polars>=1.0"]
 docs = ["quartodoc>=0.11", "griffe<2", "jupyter", "plotly>=5.0", "pillow>=9.0", "polars>=1.0"]
 
 [project.urls]
-Documentation = "https://drosenman.github.io/pyorbiter/"
+Homepage = "https://pyorbiter.com"
+Documentation = "https://pyorbiter.com"
 Repository = "https://github.com/DRosenman/pyorbiter"
+Issues = "https://github.com/DRosenman/pyorbiter/issues"
 "R package" = "https://github.com/DRosenman/orbitr"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyorbiter"]
+
+# The source distribution carries the package, its tests and the app, not the
+# documentation site.
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/tests", "/app", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

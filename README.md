@@ -4,7 +4,7 @@ A tidy N-body physics engine for building and visualizing orbital simulations in
 
 Build a system of bodies, integrate it forward in time, and get back a tidy DataFrame with one row per body per time step, ready for pandas or polars, matplotlib, or plotly. `pyorbiter` is the Python sibling of the [orbitr](https://orbit-r.com) R package.
 
-Full documentation, with a function reference and articles: <https://drosenman.github.io/pyorbiter/>.
+Full documentation, with a function reference and articles: <https://pyorbiter.com>.
 
 ```python
 import pyorbiter as orb
@@ -21,13 +21,17 @@ orb.plot_orbits(sim)
 
 ## Installation
 
-From a clone of this repository:
+```bash
+pip install pyorbiter              # the package
+pip install "pyorbiter[plotly]"    # plus interactive 3D plots
+pip install "pyorbiter[polars]"    # plus polars DataFrames
+pip install "pyorbiter[gif]"       # plus saving animations as GIFs
+```
+
+To work on the package itself, clone the repository and install it in editable mode with the development tools:
 
 ```bash
-pip install -e .            # the package
-pip install -e ".[plotly]"  # plus interactive 3D plots
-pip install -e ".[polars]"  # plus polars DataFrames
-pip install -e ".[dev]"     # plus pytest, plotly, pillow, polars
+pip install -e ".[dev]"
 ```
 
 Requires Python 3.10+, numpy, pandas, and matplotlib. polars is optional.
@@ -64,7 +68,7 @@ sim = orb.continue_simulation(sim, time_step=orb.seconds_per_hour, duration=orb.
 
 ### pandas or polars
 
-Results are pandas DataFrames by default. To get polars DataFrames instead, install the extra (`pip install -e ".[polars]"`) and switch the backend once:
+Results are pandas DataFrames by default. To get polars DataFrames instead, install the extra (`pip install "pyorbiter[polars]"`) and switch the backend once:
 
 ```python
 orb.set_backend("polars")

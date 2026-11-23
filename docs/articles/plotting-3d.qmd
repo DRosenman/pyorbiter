@@ -21,7 +21,7 @@ You can also force 3D rendering for planar data with `three_d=True`. This is use
 The 3D plots need plotly, which is an optional dependency. It comes with the `plotly` extra:
 
 ```bash
-pip install "pyorbiter[plotly] @ git+https://github.com/DRosenman/pyorbiter.git"
+pip install "pyorbiter[plotly]"
 ```
 
 ## How the 2D/3D switch works

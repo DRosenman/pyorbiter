@@ -10,6 +10,7 @@ execute:
 website:
   title: "pyorbiter"
   description: "A tidy N-body physics engine for building and visualizing orbital simulations in Python."
+  site-url: https://pyorbiter.com
   repo-url: https://github.com/DRosenman/pyorbiter
   repo-actions: [issue]
   page-navigation: true

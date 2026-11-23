@@ -11,16 +11,16 @@ import pyorbiter as orb
 
 ## Installation
 
-`pyorbiter` is not on PyPI yet. Install it from GitHub:
+Install `pyorbiter` from PyPI:
 
 ```bash
-pip install "git+https://github.com/DRosenman/pyorbiter.git"
+pip install pyorbiter
 ```
 
 This installs numpy, pandas, and matplotlib with it. For interactive 3D plots, polars DataFrames, and saving animations as GIFs, add the optional extras:
 
 ```bash
-pip install "pyorbiter[plotly,polars,gif] @ git+https://github.com/DRosenman/pyorbiter.git"
+pip install "pyorbiter[plotly,polars,gif]"
 ```
 
 ## Your first simulation in 30 seconds
