@@ -1,0 +1,329 @@
+---
+title: "Conservation Checks"
+description: "How to use energy, momentum and angular momentum to judge whether a simulation can be trusted, and what the three integrators do to each of them."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+A simulation always returns numbers. The question is whether they are right. For most systems there is no exact answer to compare against, but there are three quantities that the real system holds fixed no matter how complicated the motion gets:
+
+- the total **energy** $E$,
+- the total **linear momentum** $\vec{P}$,
+- the total **angular momentum** $\vec{L}$.
+
+An isolated system of bodies interacting through gravity conserves all three exactly. A simulation of it does not have to. Any change in them over a run is an error introduced by the integrator, so watching them is the cheapest test of a time step and a method that you have. `pyorbiter` has four functions for it: [`get_energy()`](../reference/get_energy.qmd), [`get_momentum()`](../reference/get_momentum.qmd), [`get_angular_momentum()`](../reference/get_angular_momentum.qmd), and [`conserved_quantities()`](../reference/conserved_quantities.qmd), which combines the other three and adds relative errors.
+
+## A system to test
+
+The examples use the Earth around the Sun for ten years with a one-day step. The orbit is slightly eccentric, so the Earth's speed and distance both change over the year.
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+
+system = orb.create_system().add_sun().add_planet("Earth", parent="Sun")
+
+sim = system.simulate(time_step=orb.seconds_per_day, duration=10 * orb.seconds_per_year)
+```
+
+## Energy
+
+`get_energy()` returns one row per time step:
+
+```{python}
+energy = orb.get_energy(sim)
+energy.head()
+```
+
+The columns are:
+
+- `time`: time since the start of the run, in seconds.
+- `kinetic`: the kinetic energy of all the bodies, $K = \sum_i \tfrac{1}{2} m_i v_i^2$, in joules.
+- `potential`: the gravitational potential energy of all the pairs of bodies, $U = -\sum_{i<j} G m_i m_j / r_{ij}$, in joules. It is zero or negative.
+- `energy`: the sum $E = K + U$. A bound system has negative total energy.
+
+Neither `kinetic` nor `potential` is constant. The Earth speeds up as it falls toward perihelion and slows as it climbs away, trading one for the other. Only the sum should hold still:
+
+```{python}
+E0 = abs(energy["energy"].iloc[0])
+
+pd.Series({
+    "swing in kinetic / |E|": (energy["kinetic"].max() - energy["kinetic"].min()) / E0,
+    "swing in potential / |E|": (energy["potential"].max() - energy["potential"].min()) / E0,
+    "swing in energy / |E|": (energy["energy"].max() - energy["energy"].min()) / E0,
+})
+```
+
+Kinetic and potential energy each move by about 6.7 percent of the total over an orbit. Their sum moves by five parts in a million. That small remainder is the integration error.
+
+If the run used gravitational softening, the potential is softened the same way, with $r_{ij}$ replaced by $\sqrt{r_{ij}^2 + \varepsilon^2}$. `get_energy()` reads `G` and `softening` from the settings recorded with the run, so you do not normally pass them yourself. [`run_settings()`](../reference/run_settings.qmd) shows what was recorded:
+
+```{python}
+orb.run_settings(sim)
+```
+
+## Momentum
+
+`get_momentum()` returns the components of the total linear momentum $\vec{P} = \sum_i m_i \vec{v}_i$ in kg m/s:
+
+```{python}
+orb.get_momentum(sim).head()
+```
+
+The total is not zero here. [`add_sun()`](../reference/OrbitSystem.add_sun.qmd) places the Sun at rest at the origin, and the Earth is moving, so the system as a whole has the Earth's momentum. Dividing by the total mass gives the speed of the center of mass:
+
+```{python}
+p0 = orb.get_momentum(sim).iloc[0]
+total_mass = orb.mass_sun + orb.mass_earth
+
+drift_speed = np.hypot(p0["px"], p0["py"]) / total_mass
+print(f"{drift_speed:.3f} m/s, or {drift_speed * 10 * orb.seconds_per_year / 1000:.0f} km in ten years")
+```
+
+The whole system drifts at 9 cm/s. That is harmless, and it is the correct physics for these initial conditions: momentum conservation says the drift continues at the same rate forever. What matters for checking the run is that the value does not change.
+
+## Angular momentum
+
+`get_angular_momentum()` returns the components of $\vec{L} = \sum_i m_i \, \vec{r}_i \times \vec{v}_i$ in kg m²/s, measured about the origin of the coordinates:
+
+```{python}
+orb.get_angular_momentum(sim).head()
+```
+
+The orbit lies in the x-y plane and runs counterclockwise, so the vector points along $+z$ and the other two components are zero.
+
+## All three at once
+
+`conserved_quantities()` merges the three tables and adds three error columns:
+
+```{python}
+checks = orb.conserved_quantities(sim)
+checks.columns.tolist()
+```
+
+The first ten columns are the ones above. The last three measure how far each quantity has moved from its value at the first time step:
+
+- `energy_error`: $(E - E_0) / |E_0|$. Signed, so you can see whether the run is gaining or losing energy.
+- `momentum_error`: $|\vec{P} - \vec{P}_0| / \sum_i m_i |\vec{v}_{i,0}|$. The change in the momentum vector, divided by the sum of the individual momenta at the start. It is scaled this way because the total momentum is often zero or close to it, which would make it a poor yardstick.
+- `angular_momentum_error`: $|\vec{L} - \vec{L}_0| / |\vec{L}_0|$.
+
+All three are dimensionless. The two vector errors are never negative.
+
+```{python}
+checks[["time", "energy_error", "momentum_error", "angular_momentum_error"]].tail()
+```
+
+The momentum and angular momentum errors are around $10^{-15}$. That is the rounding error of double-precision arithmetic: as good as conserved. The energy error is larger and changes from row to row. The next sections look at why.
+
+## Comparing the three integrators
+
+Here is the same system run with each method, at the same one-day step:
+
+```{python}
+labels = {"verlet": "Velocity Verlet", "euler_cromer": "Euler-Cromer", "euler": "Standard Euler"}
+
+by_method = {}
+for method in labels:
+    run = system.simulate(time_step=orb.seconds_per_day,
+                          duration=10 * orb.seconds_per_year, method=method)
+    by_method[method] = orb.conserved_quantities(run)
+
+fig, ax = plt.subplots(figsize=(7, 4.5))
+for method, table in by_method.items():
+    ax.plot(table["time"] / orb.seconds_per_year, table["energy_error"].abs(), label=labels[method])
+ax.set_yscale("log")
+ax.set_ylim(1e-9, 2)
+ax.set_xlabel("Time (years)")
+ax.set_ylabel("|relative energy error|")
+ax.legend(ncol=3, loc="lower center", bbox_to_anchor=(0.5, 1.0), frameon=False);
+```
+
+The vertical axis is logarithmic, and the three methods sit in three separate bands.
+
+```{python}
+pd.DataFrame([
+    {
+        "method": method,
+        "max_energy_error": table["energy_error"].abs().max(),
+        "final_energy_error": table["energy_error"].iloc[-1],
+        "max_momentum_error": table["momentum_error"].max(),
+        "max_angular_momentum_error": table["angular_momentum_error"].max(),
+    }
+    for method, table in by_method.items()
+])
+```
+
+**Velocity Verlet** has an energy error that rises and falls once per orbit, peaking at $5 \times 10^{-6}$, and comes back almost to zero each time the Earth returns to perihelion. The peak in year ten is the same as the peak in year one. The error is bounded, not accumulating.
+
+**Euler-Cromer** also oscillates within a fixed bound, with a peak about 100 times larger at $4.8 \times 10^{-4}$.
+
+**Standard Euler** gains energy on every step and never gives it back. After ten years the total energy is off by 49 percent, and the orbit has spiraled well away from where it should be.
+
+The difference is that Verlet and Euler-Cromer are *symplectic*. A symplectic method does not conserve the true energy exactly, but it does exactly conserve a slightly different quantity that stays close to it, so the true energy can only wobble. Standard Euler has no such property, and its errors all push the same way.
+
+## Why momentum is conserved and energy is not
+
+The table above shows momentum conserved to rounding error by all three methods, including standard Euler. That is not luck. It follows from how the update is built.
+
+Every method changes the velocities by adding acceleration times $\Delta t$. The change in total momentum over a step is therefore
+
+$$\Delta \vec{P} = \sum_j m_j \, \vec{a}_j \, \Delta t = \Delta t \sum_j \sum_{k \neq j} \vec{F}_{jk}$$
+
+where $\vec{F}_{jk}$ is the force on body $j$ from body $k$. The kernel computes the force on $j$ from $k$ and the force on $k$ from $j$ from the same separation vector with opposite signs, so the double sum cancels in pairs. This is Newton's third law, and it holds for the numbers in the computer, not just for the ideal equations. It holds for any step size, however bad the positions are. The only thing left is the rounding in the additions.
+
+Energy has no such protection. It is not a sum of things that cancel. It depends on speeds squared and on one over the distances, and the integrator gets both the speeds and the distances slightly wrong, because it treats the acceleration as constant across a step when it is really changing. That truncation error shows up directly in $E$.
+
+Angular momentum is in between. For Verlet and Euler-Cromer the errors in position and velocity are arranged so that $\sum_j m_j \, \vec{r}_j \times \vec{v}_j$ changes only by the total torque, and the total torque of forces that act along the lines between bodies is zero. Both conserve $\vec{L}$ to rounding. Standard Euler does not: each step adds a leftover term $\Delta t^2 \sum_j m_j \, \vec{v}_j \times \vec{a}_j$ that has no reason to vanish, and over ten years its angular momentum error reaches 40 percent.
+
+The practical summary:
+
+| Quantity | What an error in it tells you |
+|----------|-------------------------------|
+| Momentum | Should always be at rounding level, around $10^{-15}$. Anything larger means the data is not a plain simulation output, for example because it was shifted to a body-centered frame. |
+| Angular momentum | At rounding level for `"verlet"` and `"euler_cromer"`. Grows with `"euler"`. |
+| Energy | The real measure of integration accuracy. Depends on the method and the time step. |
+
+## How the energy error scales with the time step
+
+The energy error is the one you can do something about, by shrinking `time_step`. Here is the largest energy error over one year for each method, as the step is halved from 24 hours down to 1.5 hours:
+
+```{python}
+steps_in_hours = [24, 12, 6, 3, 1.5]
+
+scaling = pd.DataFrame(index=pd.Index(steps_in_hours, name="time_step_hours"),
+                       columns=list(labels), dtype=float)
+for hours in steps_in_hours:
+    for method in labels:
+        run = system.simulate(time_step=hours * orb.seconds_per_hour,
+                              duration=orb.seconds_per_year, method=method)
+        scaling.loc[hours, method] = orb.conserved_quantities(run)["energy_error"].abs().max()
+
+scaling
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(7, 4.5))
+for method in labels:
+    ax.plot(scaling.index, scaling[method], "o-", label=labels[method])
+ax.set_xscale("log")
+ax.set_yscale("log")
+ax.set_xticks(steps_in_hours, [str(h) for h in steps_in_hours])
+ax.set_xticks([], minor=True)
+ax.set_xlabel("time_step (hours)")
+ax.set_ylabel("largest |relative energy error| in one year")
+ax.legend();
+```
+
+On logarithmic axes each method is close to a straight line, and the slope is the order of the method. Dividing each row of the table by the next one gives the factor gained from each halving of the step:
+
+```{python}
+gain = scaling.iloc[:-1].to_numpy() / scaling.iloc[1:].to_numpy()
+pd.DataFrame(gain, columns=list(labels),
+             index=[f"{a} to {b} h" for a, b in zip(steps_in_hours[:-1], steps_in_hours[1:])])
+```
+
+Verlet gains a factor of 4.00 for every halving: its energy error is proportional to $\Delta t^2$, which is what second order means. The two Euler methods head toward a factor of 2, an error proportional to $\Delta t$, and are still settling toward it at these step sizes. Halving the step doubles the number of steps and so doubles the run time. With Verlet that buys four times the accuracy. With a first-order method it buys two.
+
+This table is also the practical test for any simulation of your own. If you are not sure a step is small enough, halve it and look at `energy_error` again. With Verlet it should drop by about four. If it does not, the step is still too coarse for something in the system, usually a close encounter or a tight inner orbit.
+
+## Use the raw simulation, not a shifted frame
+
+[`shift_reference_frame()`](../reference/shift_reference_frame.qmd) re-centers a simulation on one body. That is useful for looking at the results (see [Reference frames](reference-frames.qmd)), but the conservation laws only hold in an inertial frame, one that is not accelerating. A frame attached to an orbiting body accelerates with that body.
+
+The table below runs `conserved_quantities()` on the same ten-year Verlet simulation in four frames: as it came out of `simulate()`, shifted to the center of mass, shifted to the Sun, and shifted to the Earth.
+
+```{python}
+frames = {
+    "as simulated": sim,
+    "barycenter": orb.shift_reference_frame(sim, "barycenter"),
+    "Sun": orb.shift_reference_frame(sim, "Sun"),
+    "Earth": orb.shift_reference_frame(sim, "Earth"),
+}
+
+rows = []
+for name, frame in frames.items():
+    table = orb.conserved_quantities(frame)
+    rows.append({
+        "frame": name,
+        "energy": table["energy"].iloc[0],
+        "max_energy_error": table["energy_error"].abs().max(),
+        "max_momentum_error": table["momentum_error"].max(),
+    })
+
+pd.DataFrame(rows)
+```
+
+The first two rows agree. The barycentric frame moves at a constant velocity relative to the original one, so it is also inertial, and it reports the same energy error and a momentum error at rounding level. The value of the energy differs slightly between them, because kinetic energy depends on the frame, but each frame conserves its own.
+
+The two body-centered rows are wrong in a way that has nothing to do with the integrator. Pinning a body to the origin sets its velocity to zero, so all of the system's momentum is carried by the other body, and that momentum vector swings around once per orbit. The momentum error reaches almost 2, which is what a vector that reverses its direction gives. In the Earth-centered frame the Sun is given the Earth's orbital speed, so the kinetic energy is enormous, the "total energy" comes out positive, and its apparent error is 6 percent. None of this says anything about the quality of the run.
+
+So run the checks on the DataFrame that `simulate()` or `continue_simulation()` returned, and shift afterward for plotting. If you want the total momentum to be zero, the barycentric frame is the one inertial shift available: `orb.shift_reference_frame(sim, "barycenter")`.
+
+## Extending a run
+
+Conservation checks often show that a run is fine and that you would like more of it. [`continue_simulation()`](../reference/continue_simulation.qmd) picks up from the last recorded state and appends new rows, with the clock still running. Here a five-year run is extended by another five:
+
+```{python}
+first_half = system.simulate(time_step=orb.seconds_per_day, duration=5 * orb.seconds_per_year)
+
+extended = orb.continue_simulation(first_half, time_step=orb.seconds_per_day,
+                                   duration=5 * orb.seconds_per_year)
+
+print("first run ends at day", first_half["time"].max() / orb.seconds_per_day)
+print("extended run ends at day", extended["time"].max() / orb.seconds_per_day)
+extended.tail(4)
+```
+
+The method, `G` and softening are taken from the settings recorded with the first run, so only the new `time_step` and `duration` are needed. The last state of the first run is not repeated in the output.
+
+With the same step and method, stopping and continuing changes nothing. The extended run is identical to the ten-year run from the start of this article, row for row:
+
+```{python}
+extended.equals(sim)
+```
+
+This works because every integrator here needs only the current positions and velocities to take the next step. There is no hidden state that a restart would lose.
+
+The new segment can also use a different step. A common pattern is a coarse step for a long stretch and a fine step where more accuracy is needed. Here the five-year daily run is continued for one more year with an hourly step:
+
+```{python}
+finer = orb.continue_simulation(first_half, time_step=orb.seconds_per_hour,
+                                duration=orb.seconds_per_year)
+finer_checks = orb.conserved_quantities(finer)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.plot(finer_checks["time"] / orb.seconds_per_year, finer_checks["energy_error"])
+ax.axvline(first_half["time"].max() / orb.seconds_per_year, color="gray", linestyle="--")
+ax.set_xlabel("Time (years)")
+ax.set_ylabel("relative energy error")
+ax.set_title("Daily steps, then hourly steps");
+```
+
+The dashed line marks the switch. Before it, the energy error swings up to $5 \times 10^{-6}$ every orbit. After it, the swing is too small to see at this scale:
+
+```{python}
+new_part = finer_checks[finer_checks["time"] > first_half["time"].max()]
+new_part["energy_error"].abs().max()
+```
+
+The recorded settings now describe the latest segment:
+
+```{python}
+orb.run_settings(finer)
+```
+
+Because `conserved_quantities()` measures every error from the first row of the table, it works across the join without any extra care. To restart from a state in the middle of a run, or to add or remove a body before carrying on, use [`system_from_simulation()`](../reference/system_from_simulation.qmd) to turn one time step back into a system.
+
+## Summary
+
+- Run [`conserved_quantities()`](../reference/conserved_quantities.qmd) on the simulation as it came out, before any frame shift.
+- `momentum_error` should be around $10^{-15}$ for every method. So should `angular_momentum_error` for `"verlet"` and `"euler_cromer"`.
+- `energy_error` is the number to watch. With the default Verlet method it oscillates within a bound and falls by a factor of four each time `time_step` is halved.
+- If the energy error grows steadily, or does not respond to a smaller step, look for a close encounter, and see [Unstable orbits](unstable-orbits.qmd) for what to try.
+- The details of the three methods are in [The physics](the-physics.qmd).

@@ -1,0 +1,267 @@
+---
+title: "Coming from R"
+description: "A map from the orbitr R package to pyorbiter: what is the same, what changes, and how closely the two agree."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+`pyorbiter` is the Python sibling of the R package [orbitr](https://orbit-r.com). If you already know orbitr, you already know most of pyorbiter. Function names, argument names, constants, and defaults are the same wherever the two languages allow it. This page lists what changes.
+
+## The same simulation in both languages
+
+In R:
+
+```r
+library(orbitr)
+
+sim <- create_system() |>
+  add_sun() |>
+  add_planet("Earth", parent = "Sun") |>
+  simulate_system(time_step = seconds_per_day, duration = seconds_per_year)
+
+plot_orbits(sim)
+```
+
+In Python:
+
+```{python}
+import pyorbiter as orb
+
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim);
+```
+
+The differences you can see here are the differences you will meet everywhere:
+
+- `library(orbitr)` puts every name in scope. In Python you write `import pyorbiter as orb` and prefix names with `orb.`, including the constants (`orb.seconds_per_day`).
+- The pipe `|>` becomes a dot. Building a system is a chain of method calls.
+- The last step of the chain is `.simulate(...)`, a short spelling of `orb.simulate_system(system, ...)`.
+- `TRUE`, `FALSE`, and `NULL` become `True`, `False`, and `None`, and `c("Pluto", "Moon")` becomes the list `["Pluto", "Moon"]`.
+
+## Function by function
+
+The R column shows each call in its plain form. In practice you would write most of them with the pipe.
+
+| orbitr (R) | pyorbiter (Python) |
+|:--|:--|
+| `create_system()` | `orb.create_system()` |
+| `add_body(system, ...)` | `system.add_body(...)` or `orb.add_body(system, ...)` |
+| `add_sun(system)` | `system.add_sun()` or `orb.add_sun(system)` |
+| `add_body_keplerian(system, ...)` | `system.add_body_keplerian(...)` or `orb.add_body_keplerian(system, ...)` |
+| `add_planet(system, "Earth", parent = "Sun")` | `system.add_planet("Earth", parent="Sun")` or `orb.add_planet(system, ...)` |
+| `remove_body(system, c("Pluto", "Moon"))` | `system.remove_body(["Pluto", "Moon"])` or `orb.remove_body(system, ...)` |
+| `load_solar_system()` | `orb.load_solar_system()` |
+| `get_bodies(system)` | `system.bodies`, `system.get_bodies()`, or `orb.get_bodies(system)` |
+| `print(system)` | `print(system)`, or just `system` at the prompt |
+| `simulate_system(system, ...)` | `system.simulate(...)` or `orb.simulate_system(system, ...)` |
+| `continue_simulation(sim, ...)` | `orb.continue_simulation(sim, ...)` |
+| `system_from_simulation(sim)` | `orb.system_from_simulation(sim)` |
+| `shift_reference_frame(sim, "Earth")` | `orb.shift_reference_frame(sim, "Earth")` or `sim.pipe(orb.shift_reference_frame, "Earth")` |
+| `get_orbital_elements(sim, "Moon", "Earth")` | `orb.get_orbital_elements(sim, "Moon", "Earth")` |
+| `get_energy(sim)`, `get_momentum(sim)`, `get_angular_momentum(sim)` | `orb.get_energy(sim)`, `orb.get_momentum(sim)`, `orb.get_angular_momentum(sim)` |
+| `conserved_quantities(sim)` | `orb.conserved_quantities(sim)` |
+| `plot_orbits()`, `plot_system()` (ggplot2) | `orb.plot_orbits()`, `orb.plot_system()` (matplotlib) |
+| `plot_orbits_3d()`, `plot_system_3d()` (plotly) | `orb.plot_orbits_3d()`, `orb.plot_system_3d()` (plotly) |
+| `animate_system()` (gganimate) | `orb.animate_system()` (matplotlib) |
+| `animate_system_3d()` (plotly) | `orb.animate_system_3d()` (plotly) |
+| `save_system()` writes `.rds` | `orb.save_system()` or `system.save()` writes JSON |
+| `load_system()` | `orb.load_system()` |
+| `export_bodies()` writes CSV | `orb.export_bodies()` or `system.export_bodies()` writes CSV |
+| `mass_earth`, `distance_earth_sun`, `seconds_per_day`, ... | `orb.mass_earth`, `orb.distance_earth_sun`, `orb.seconds_per_day`, ... |
+| a tibble | a pandas DataFrame, or a polars DataFrame |
+| attributes on the tibble | `sim.attrs` (pandas) or `orb.run_settings(sim)` (either) |
+| the C++ kernel, `use_cpp` | a vectorized numpy kernel, no switch |
+
+Three things exist only on the Python side:
+
+- [`orb.set_backend()`](../reference/set_backend.qmd), [`orb.get_backend()`](../reference/get_backend.qmd), and the `backend=` argument choose between pandas and polars output. See [pandas or polars](pandas-or-polars.qmd).
+- [`orb.run_settings()`](../reference/run_settings.qmd) reads the settings of a run from either kind of DataFrame.
+- [`orb.calc_acceleration()`](../reference/calc_acceleration.qmd) exposes the acceleration kernel.
+
+## The pipe versus method chaining
+
+In R a system is an `orbit_system` object that you pass from one function to the next with `|>`. In Python a system is an [`OrbitSystem`](../reference/OrbitSystem.qmd) object, and each builder is a method that returns a new system:
+
+```{python}
+system = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+)
+
+system
+```
+
+As in R, nothing is modified in place. `system.remove_body("Mars")` returns a new system and `system` still has three bodies:
+
+```{python}
+len(system.remove_body("Mars")), len(system)
+```
+
+Every method also has a function form that takes the system as its first argument, with the same name as in R. The two forms give the same system:
+
+```{python}
+by_function = orb.add_planet(orb.add_sun(orb.create_system()), "Earth", parent="Sun")
+by_method = orb.create_system().add_sun().add_planet("Earth", parent="Sun")
+
+by_function.bodies.equals(by_method.bodies)
+```
+
+One small difference in the signatures: `parent` must be given by name in `add_planet()` and `add_body_keplerian()`.
+
+The analysis and plotting functions take a simulation DataFrame, not a system, so they are plain functions. Nest them, or use the DataFrame's own `pipe` method to read left to right as you would in R:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+sim.pipe(orb.shift_reference_frame, "Moon").pipe(orb.plot_orbits);
+```
+
+## Tibble attributes versus `attrs` and `run_settings()`
+
+orbitr records the settings of a run (`G`, `softening`, `method`, `time_step`) as attributes on the tibble that `simulate_system()` returns. pyorbiter records the same four settings. With pandas they are in the DataFrame's `attrs` dictionary:
+
+```{python}
+sim.attrs
+```
+
+`orb.run_settings()` returns the same thing and also works for polars DataFrames, which have no `attrs`:
+
+```{python}
+sim_pl = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year, backend="polars")
+)
+
+orb.run_settings(sim_pl)
+```
+
+As in R, the functions that need these settings, such as `get_energy()`, `conserved_quantities()`, and `continue_simulation()`, pick them up by default. There is one catch with polars: the settings are remembered only for the exact DataFrame pyorbiter returned. A frame you derive from it has lost them:
+
+```{python}
+orb.run_settings(sim_pl.filter(sim_pl["id"] == "Earth"))
+```
+
+If such a run did not use the default `G`, `softening`, or `method`, pass them explicitly. [pandas or polars](pandas-or-polars.qmd) has the details.
+
+## tibbles versus DataFrames
+
+The simulation has the same columns as in R: `id`, `mass`, `x`, `y`, `z`, `vx`, `vy`, `vz`, `time`, with one row per body per time step.
+
+```{python}
+sim.head(4)
+```
+
+Where you would reach for dplyr in R, use pandas (or polars) directly:
+
+| dplyr | pandas |
+|:--|:--|
+| `filter(sim, id == "Moon")` | `sim[sim["id"] == "Moon"]` |
+| `mutate(sim, r = sqrt(x^2 + y^2))` | `sim.assign(r=(sim["x"]**2 + sim["y"]**2) ** 0.5)` |
+| `summarise(group_by(sim, id), max_x = max(x))` | `sim.groupby("id")["x"].max()` |
+
+Chained together, with a change of reference frame first, these give the smallest and largest distance of each body from Earth:
+
+```{python}
+earth_frame = orb.shift_reference_frame(sim, "Earth")
+
+(
+    earth_frame
+    .assign(r=(earth_frame["x"] ** 2 + earth_frame["y"] ** 2) ** 0.5)
+    .groupby("id")["r"]
+    .agg(["min", "max"])
+)
+```
+
+## ggplot2 versus matplotlib
+
+In R, the 2D plotters return a ggplot object and you add layers with `+`. In Python they return a matplotlib `Axes`, and you customize by calling its methods:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+ax = orb.plot_orbits(sim)
+ax.plot(0, 0, "o", markersize=12, color="C0")
+ax.set_title("Earth-Sun Orbit");
+```
+
+To place the plot inside a figure of your own, for example next to another panel, pass an existing `Axes` with `ax=`:
+
+```{python}
+import matplotlib.pyplot as plt
+
+fig, (left, right) = plt.subplots(1, 2, figsize=(10, 5))
+orb.plot_orbits(sim, ax=left)
+orb.plot_system(sim, time=90 * orb.seconds_per_day, trails=True, ax=right);
+```
+
+The rest of the plotting behavior carries over:
+
+- A simulation with any motion in `z` gives an interactive plotly figure, and `three_d=True` or `three_d=False` forces one or the other.
+- The 3D functions use plotly in both languages.
+- `animate_system()` uses matplotlib in place of gganimate. It returns a `FuncAnimation`, and `path="orbit.gif"` saves it as a GIF.
+
+See [Custom Visualization](custom-visualization.qmd) and [3D Plotting](plotting-3d.qmd).
+
+## Saving systems
+
+`save_system()` in R writes an `.rds` file, which only R can read. In Python it writes JSON. The two files are not interchangeable, so to move a system between the languages, use `export_bodies()`. It writes the body table as a CSV in both packages, with the same columns.
+
+## Do the two agree?
+
+Yes. pyorbiter implements the same equations with the same constants, and its test suite compares its output with numbers produced by orbitr 1.0.0. The reference numbers are stored in `tests/reference/r_reference.json`, the R script that produced them is `tests/reference/make_reference.R`, and the comparisons are in `tests/test_parity_with_r.py`.
+
+Here is one of those comparisons done by hand: Earth after 365 one-day steps around the Sun. The R values are copied from the reference file.
+
+```{python}
+import pandas as pd
+
+sim = (
+    orb.create_system()
+    .add_body("Sun", mass=orb.mass_sun)
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .simulate(time_step=orb.seconds_per_day, duration=365 * orb.seconds_per_day)
+)
+
+python = sim[sim["id"] == "Earth"].iloc[-1][["x", "y", "vx", "vy"]].astype(float)
+r = pd.Series({"x": 149599848652.46, "y": 215519178.446102,
+               "vx": -42.3704376409083, "vy": 29779.9698859056})
+
+pd.DataFrame({"python": python, "R": r, "relative difference": (python - r).abs() / r.abs()})
+```
+
+The tests assert agreement to these tolerances:
+
+| What is compared | Relative tolerance |
+|:--|:--|
+| Initial states from `load_solar_system()` and from a hyperbolic `add_body_keplerian()` | $10^{-12}$ |
+| Final positions and velocities for all three integrators, a continued run, a 30-day solar system run, a softened 3D three-body run, and the barycentric and Earth-centered frames | $10^{-8}$ |
+| Energy, momentum, and angular momentum from `conserved_quantities()` and `get_energy()` | $10^{-8}$ |
+| Orbital elements from `get_orbital_elements()` (Moon, Mars, and a hyperbolic flyby) | $10^{-7}$ |
+
+For positions and velocities the tolerance is relative to the largest value in each column, so a quantity that is nearly zero, such as the Sun's small wobble, is compared on the scale of the planets' values. The relative error columns of `conserved_quantities()` are differences of nearly equal numbers, so the tests check them only loosely: to one part in a thousand, or to within $10^{-14}$.
+
+In short, a simulation built the same way in both packages gives the same numbers to about eight significant figures.

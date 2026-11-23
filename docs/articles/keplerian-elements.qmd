@@ -1,0 +1,352 @@
+---
+title: "Keplerian Orbital Elements"
+description: "What the six Keplerian orbital elements mean, how each one changes an orbit, and how to use them with add_body_keplerian() and add_planet()."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+The [Building Two-Body Orbits](building-two-body-orbits.qmd) guide shows how to set up orbits using Cartesian position and velocity vectors: the `x`, `y`, `z`, `vx`, `vy`, `vz` arguments of [`add_body()`](../reference/OrbitSystem.add_body.qmd). That is the most flexible approach, but it requires you to think in coordinates: "place the planet at (1.496e11, 0, 0) with velocity (0, 29780, 0)."
+
+Astronomers have a different language for describing orbits. Instead of positions and velocities, they use six numbers called **Keplerian orbital elements** that describe the shape, orientation, and current position of an orbit in a more intuitive way. These are the inputs to [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd) and the data that [`add_planet()`](../reference/OrbitSystem.add_planet.qmd) looks up for you.
+
+This article explains what each element means physically, shows how it affects the resulting orbit, and demonstrates how to use the elements in pyorbiter.
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+```
+
+## The Six Elements
+
+An orbit in three-dimensional space has six degrees of freedom, the same number as a Cartesian state vector (x, y, z, vx, vy, vz). The Keplerian elements split those six numbers into three groups: **shape**, **orientation**, and **position**.
+
+| Element | Symbol | Argument | Units |
+|---|---|---|---|
+| Semi-major axis | $a$ | `a` | meters |
+| Eccentricity | $e$ | `e` | none |
+| Inclination | $i$ | `i` | degrees |
+| Longitude of ascending node | $\Omega$ | `lan` | degrees |
+| Argument of periapsis | $\omega$ | `arg_pe` | degrees |
+| True anomaly | $\nu$ | `nu` | degrees |
+
+Every element except `a` defaults to zero, and every orbit is defined relative to a `parent` body that must already be in the system.
+
+The examples below all follow the same pattern: build a Sun and one planet from a set of elements, simulate, and keep the planet's rows. A small helper does that.
+
+```{python}
+def planet_path(years=1.0, time_step=orb.seconds_per_day, **elements):
+    sim = (
+        orb.create_system()
+        .add_sun()
+        .add_body_keplerian(
+            "Planet", mass=1e24, parent="Sun",
+            a=orb.distance_earth_sun, **elements,
+        )
+        .simulate(time_step=time_step, duration=years * orb.seconds_per_year)
+    )
+    return sim[sim["id"] == "Planet"]
+
+
+def draw_paths(paths, title, horizontal="x", vertical="y", sun=True):
+    fig, ax = plt.subplots()
+    for label, path in paths.items():
+        ax.plot(path[horizontal], path[vertical], linewidth=1.5, label=label)
+    if sun:
+        ax.plot(0, 0, "o", color="gold", markersize=10)
+    ax.set_aspect("equal")
+    ax.set_xlabel(f"{horizontal.upper()} (m)")
+    ax.set_ylabel(f"{vertical.upper()} (m)")
+    ax.set_title(title)
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
+    plt.show()
+```
+
+### Shape: Semi-Major Axis and Eccentricity
+
+The first two elements define the geometry of the ellipse: how big it is and how stretched.
+
+**Semi-major axis** ($a$) is half the longest diameter of the ellipse. It is also the average of the closest and farthest distances from the parent. Larger $a$ means a bigger orbit and a longer period. In pyorbiter it is given in meters.
+
+**Eccentricity** ($e$) controls the shape. A circle has $e = 0$. As $e$ increases toward 1, the ellipse becomes more elongated. At any point along the orbit, the distance from the parent is
+
+$$r = \frac{a(1 - e^2)}{1 + e \cos\nu}$$
+
+where $\nu$ is the true anomaly (the body's current angular position, described below). At the closest approach (**periapsis**, $\nu = 0$) the distance is $r_{\text{peri}} = a(1-e)$. At the farthest point (**apoapsis**, $\nu = 180°$) it is $r_{\text{apo}} = a(1+e)$.
+
+Here is how eccentricity changes the shape of the orbit:
+
+```{python}
+draw_paths(
+    {
+        "e = 0.0 (circle)": planet_path(e=0.0, time_step=orb.seconds_per_hour),
+        "e = 0.2 (Mercury-like)": planet_path(e=0.2, time_step=orb.seconds_per_hour),
+        "e = 0.5 (comet-like)": planet_path(e=0.5, time_step=orb.seconds_per_hour),
+        "e = 0.85 (Halley-like)": planet_path(e=0.85, time_step=orb.seconds_per_hour),
+    },
+    "Same semi-major axis, different eccentricities",
+)
+```
+
+All four orbits have the same semi-major axis, so they have the same orbital period (Kepler's third law: $T^2 \propto a^3$). Their shapes are very different, from a perfect circle to a narrow ellipse that passes the Sun at 0.15 times the Earth-Sun distance at periapsis and swings out to 1.85 times at apoapsis.
+
+[`get_orbital_elements()`](../reference/get_orbital_elements.qmd) confirms the period. It reads the elements back out of a simulation, one row per time step.
+
+```{python}
+rows = []
+for e in [0.0, 0.2, 0.5, 0.85]:
+    start = (
+        orb.create_system()
+        .add_sun()
+        .add_body_keplerian("Planet", mass=1e24, parent="Sun",
+                            a=orb.distance_earth_sun, e=e)
+        .simulate(duration=0)
+    )
+    el = orb.get_orbital_elements(start, "Planet", "Sun").iloc[0]
+    rows.append({
+        "e": e,
+        "periapsis / a": (1 - el["e"]),
+        "apoapsis / a": (1 + el["e"]),
+        "period (days)": el["period"] / orb.seconds_per_day,
+    })
+
+pd.DataFrame(rows).round(2)
+```
+
+The eccentricity plot uses a one-hour time step where the other plots in this article use one day. A body on a very eccentric orbit moves fast near periapsis, and the integrator needs small steps there to follow it accurately. See [Unstable orbits](unstable-orbits.qmd) for more on choosing a time step.
+
+### Orientation: Inclination, Longitude of Ascending Node, and Argument of Periapsis
+
+The next three elements rotate and tilt the ellipse in 3D space. All three are given in degrees.
+
+**Inclination** ($i$) is the tilt of the orbital plane relative to a reference plane, which in pyorbiter is the XY plane. For the solar system the reference plane is the ecliptic, the plane of Earth's orbit. An inclination of $0°$ means the orbit lies flat in the reference plane. $90°$ means the orbit is perpendicular to it.
+
+```{python}
+draw_paths(
+    {
+        "i = 0 (flat)": planet_path(e=0.1, i=0),
+        "i = 30": planet_path(e=0.1, i=30),
+        "i = 60": planet_path(e=0.1, i=60),
+        "i = 90 (polar)": planet_path(e=0.1, i=90),
+    },
+    "Same orbit, different inclinations (viewed along the X axis: Y vs Z)",
+    horizontal="y", vertical="z", sun=False,
+)
+```
+
+This is an edge-on view, so each orbit appears as a line. The flat orbit ($i = 0$) stays in the XY plane with $z = 0$. As the inclination increases the orbit tilts further out of the plane, until $i = 90°$ gives a polar orbit that passes directly over the poles of the reference plane.
+
+**Longitude of ascending node** ($\Omega$, called `lan` in pyorbiter) is the compass direction of the tilt. It is the angle from a reference direction (the +x axis here, the vernal equinox in real astronomy) to the point where the orbit crosses the reference plane going "upward". Think of inclination as how much the orbit tilts, and $\Omega$ as which direction it tilts toward.
+
+When $i = 0$ there is no ascending node. In that case `lan` simply adds to `arg_pe`: both rotate the ellipse within the XY plane.
+
+```{python}
+draw_paths(
+    {
+        "lan = 0": planet_path(e=0.1, i=45, lan=0),
+        "lan = 90": planet_path(e=0.1, i=45, lan=90),
+        "lan = 180": planet_path(e=0.1, i=45, lan=180),
+    },
+    "Same orbit tilted in different directions (top-down view)",
+)
+```
+
+All three orbits have the same shape and inclination. Seen from above, a tilted orbit looks squashed. $\Omega$ rotates the whole tilted plane around the vertical axis, which changes the direction of the squashing.
+
+**Argument of periapsis** ($\omega$, called `arg_pe` in pyorbiter) is the angle within the orbital plane from the ascending node to the closest-approach point (periapsis). It controls where along the orbit the body gets closest to its parent.
+
+```{python}
+draw_paths(
+    {
+        "arg_pe = 0": planet_path(e=0.5, arg_pe=0),
+        "arg_pe = 90": planet_path(e=0.5, arg_pe=90),
+        "arg_pe = 180": planet_path(e=0.5, arg_pe=180),
+    },
+    "Same ellipse, rotated within the orbital plane",
+)
+```
+
+The ellipse is the same shape every time. $\omega$ spins it around the parent, moving the periapsis to a different direction.
+
+### Position: True Anomaly
+
+The final element pins down where the body currently is along its orbit.
+
+**True anomaly** ($\nu$, called `nu` in pyorbiter) is the angle measured from periapsis to the body's current position, in the direction of orbital motion. $\nu = 0°$ means the body starts at periapsis (the closest point). $\nu = 180°$ puts it at apoapsis (the farthest point).
+
+A system's `bodies` table holds the starting state of every body, so we can read off where each choice of `nu` puts the planet without simulating anything.
+
+```{python}
+def start_position(nu):
+    system = (
+        orb.create_system()
+        .add_sun()
+        .add_body_keplerian("Planet", mass=1e24, parent="Sun",
+                            a=orb.distance_earth_sun, e=0.3, nu=nu)
+    )
+    bodies = system.bodies
+    return bodies[bodies["id"] == "Planet"]
+
+
+orbit = planet_path(e=0.3)
+
+fig, ax = plt.subplots()
+ax.plot(orbit["x"], orbit["y"], color="0.7", linewidth=1)
+for label, nu in {"nu = 0 (periapsis)": 0, "nu = 90": 90, "nu = 180 (apoapsis)": 180}.items():
+    start = start_position(nu)
+    ax.plot(start["x"], start["y"], "o", markersize=9, label=label)
+ax.plot(0, 0, "o", color="gold", markersize=10)
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_title("Starting position at different true anomaly values")
+ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
+plt.show()
+```
+
+By default, `add_body_keplerian()` and `add_planet()` use $\nu = 0$ (starting at periapsis). In [`load_solar_system()`](../reference/load_solar_system.qmd), every body starts at periapsis. If you want to spread the planets around their orbits, pass different `nu` values to `add_planet()`:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Mercury", parent="Sun", nu=30)
+    .add_planet("Venus", parent="Sun", nu=120)
+    .add_planet("Earth", parent="Sun", nu=210)
+    .add_planet("Mars", parent="Sun", nu=300)
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_system(sim, time=0, trails=True, three_d=False)
+plt.show()
+```
+
+[`plot_system()`](../reference/plot_system.qmd) with `time=0` marks where each planet starts, and `trails=True` draws the paths they go on to follow. Mars has not finished a lap, because its year is longer than the one year simulated here.
+
+## The Conversion: Elements to Cartesian
+
+`add_body_keplerian()` converts the six elements into a Cartesian state vector (position and velocity) in three steps. You do not need to know this to use the function, but it is useful if you want to verify the math or extend it.
+
+**Step 1: Position and velocity in the orbital plane.** The orbit equation gives the distance at the current true anomaly:
+
+$$r = \frac{a(1-e^2)}{1 + e\cos\nu}$$
+
+Position in the perifocal frame (a coordinate system aligned with the orbit, with its x axis pointing toward periapsis):
+
+$$x_{\text{pf}} = r\cos\nu, \quad y_{\text{pf}} = r\sin\nu$$
+
+The specific angular momentum $h = \sqrt{\mu a(1-e^2)}$, where $\mu = GM_{\text{parent}}$, gives the velocity:
+
+$$v_{x,\text{pf}} = -\frac{\mu}{h}\sin\nu, \quad v_{y,\text{pf}} = \frac{\mu}{h}(e + \cos\nu)$$
+
+**Step 2: Rotate into inertial coordinates.** Three successive rotations transform from the perifocal frame to the simulation's axes: by $\omega$ about the orbit normal, by $i$ about the line of nodes, and by $\Omega$ about the z axis.
+
+**Step 3: Add the parent's state.** The resulting position and velocity are relative to the parent body. `add_body_keplerian()` adds the parent's current position and velocity to produce coordinates in the simulation frame. This is what lets you put a moon around a planet that is itself orbiting a star.
+
+Here is the conversion at work. The elements go in, and the body table holds the Cartesian state that comes out:
+
+```{python}
+system = (
+    orb.create_system()
+    .add_sun()
+    .add_body_keplerian(
+        "Planet", mass=1e24, parent="Sun",
+        a=orb.distance_earth_sun, e=0.3, i=20, lan=40, arg_pe=60, nu=80,
+    )
+)
+
+system.bodies
+```
+
+`get_orbital_elements()` runs the conversion in the other direction, and recovers the six numbers we started with:
+
+```{python}
+start = system.simulate(duration=0)
+orb.get_orbital_elements(start, "Planet", "Sun").round(6)
+```
+
+The last column is the orbital period in seconds.
+
+## Open Orbits
+
+An eccentricity above 1 describes a hyperbola: a body that passes its parent once and never returns. `add_body_keplerian()` accepts these too. By convention the semi-major axis of a hyperbola is negative, so pass a negative `a`. The periapsis distance is still $a(1-e)$, which is positive because both factors are negative.
+
+A hyperbola only exists between its two asymptotes, so `nu` is limited to $|\nu| < \arccos(-1/e)$. A negative `nu` starts the body on its way in. An eccentricity of exactly 1 (a parabola) is not supported.
+
+```{python}
+flyby = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_body_keplerian(
+        "Visitor", mass=1e12, parent="Sun",
+        a=-orb.distance_earth_sun, e=1.5, nu=-110,
+    )
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(flyby)
+plt.show()
+```
+
+The visitor comes in from the lower left, rounds the Sun at half the Earth-Sun distance, and leaves toward the upper left.
+
+## Using `add_planet()` for Quick Setup
+
+For the ten bodies that pyorbiter knows about (Mercury through Neptune, plus the Moon and Pluto), `add_planet()` looks up the mass and elements for you. The full list, with the eccentricities and inclinations it uses:
+
+| Body    | Eccentricity | Inclination | Usual parent |
+|---------|-------------|-------------|--------|
+| Mercury | 0.2056      | 7.00°       | Sun    |
+| Venus   | 0.0068      | 3.39°       | Sun    |
+| Earth   | 0.0167      | 0.00°       | Sun    |
+| Mars    | 0.0934      | 1.85°       | Sun    |
+| Jupiter | 0.0489      | 1.30°       | Sun    |
+| Saturn  | 0.0565      | 2.49°       | Sun    |
+| Uranus  | 0.0457      | 0.77°       | Sun    |
+| Neptune | 0.0113      | 1.77°       | Sun    |
+| Moon    | 0.0549      | 5.15°       | Earth  |
+| Pluto   | 0.2488      | 17.16°      | Sun    |
+
+Notice the range. Venus has an almost perfectly circular orbit ($e = 0.007$), while Pluto's is quite eccentric ($e = 0.25$) and steeply tilted ($i = 17°$). Mercury is the most eccentric of the eight planets ($e = 0.21$) and the most inclined to the ecliptic ($i = 7°$).
+
+`add_planet()` does not assume a parent. You always name it with `parent=`, and it must already be in the system. The body's name is not case-sensitive.
+
+Any element can be overridden, and so can the mass. This makes `add_planet()` useful for thought experiments. What if Mercury's orbit were circular?
+
+```{python}
+def mercury_path(**overrides):
+    sim = (
+        orb.create_system()
+        .add_sun()
+        .add_planet("Mercury", parent="Sun", **overrides)
+        .simulate(time_step=6 * orb.seconds_per_hour, duration=88 * orb.seconds_per_day)
+    )
+    return sim[sim["id"] == "Mercury"]
+
+
+draw_paths(
+    {
+        "Real Mercury (e = 0.21)": mercury_path(),
+        "Circular Mercury (e = 0)": mercury_path(e=0),
+    },
+    "Mercury: real vs. circular orbit",
+)
+```
+
+Both orbits take the same 88 days, because the semi-major axis is unchanged. The real Mercury ranges from 46 to 70 million kilometers from the Sun. The circular one stays at 58 million.
+
+## Keplerian vs. Cartesian: When to Use Which
+
+Use **`add_body()` with Cartesian vectors** when you are building a system from physical intuition about positions and velocities: binary stars, custom test particles, or anything where you have worked out the velocity from $v = \sqrt{GM/r}$ by hand. The [Building Two-Body Orbits](building-two-body-orbits.qmd) guide covers this approach in depth.
+
+Use **`add_body_keplerian()`** when you know the orbital parameters of a real or fictional body, or when you want precise control over the orbit's shape and orientation. It is especially useful for inclined or eccentric orbits, where computing the right Cartesian velocity by hand would be tedious.
+
+Use **`add_planet()`** when you want a real solar system body with its real mass and orbit and do not need to think about any of this.
+
+The three can be mixed freely in one system. The [Examples](examples.qmd) gallery has several systems built that way.

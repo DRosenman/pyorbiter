@@ -262,3 +262,22 @@ def test_2d_animation_saves_gif(tmp_path, sim):
     orb.animate_system(sim, fps=5, duration=1, trails=True, path=path)
     assert path.stat().st_size > 0
     plt.close("all")
+
+
+def test_keplerian_needs_a_gravitating_parent():
+    massless = orb.create_system().add_body("Marker", mass=0)
+    with pytest.raises(ValueError, match="gravitating parent"):
+        massless.add_body_keplerian("Probe", mass=1.0, a=1e9, parent="Marker")
+    no_gravity = orb.create_system(G=0).add_sun()
+    with pytest.raises(ValueError, match="gravitating parent"):
+        no_gravity.add_planet("Earth", parent="Sun")
+
+
+def test_saving_a_3d_animation_warns_that_path_is_ignored(tmp_path):
+    pytest.importorskip("plotly")
+    tilted = (orb.create_system().add_sun()
+              .add_body_keplerian("Comet", mass=1e14, a=3e11, e=0.5, i=40, parent="Sun")
+              .simulate(time_step=orb.seconds_per_day, duration=20 * orb.seconds_per_day))
+    with pytest.warns(UserWarning, match="three_d=False"):
+        orb.animate_system(tilted, fps=2, duration=2, path=tmp_path / "comet.gif")
+    assert not (tmp_path / "comet.gif").exists()

@@ -1,0 +1,380 @@
+---
+title: "Custom Visualization with matplotlib and plotly"
+description: "Build your own matplotlib and plotly figures directly from the tidy DataFrame that a simulation returns."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+```{python}
+import matplotlib.pyplot as plt
+import numpy as np
+import pyorbiter as orb
+```
+
+[`plot_orbits()`](../reference/plot_orbits.qmd) and [`plot_orbits_3d()`](../reference/plot_orbits_3d.qmd) are convenience functions for quick trajectory plots. They are designed to give you a useful picture in one line so you can focus on setting up the physics. But the real strength of `pyorbiter` is that [`simulate()`](../reference/simulate_system.qmd) returns a standard tidy DataFrame. You can use matplotlib, plotly, or any other plotting library directly on the output.
+
+## The raw output
+
+Here is what the simulation DataFrame looks like:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+sim.head()
+```
+
+Each row is one body at one point in time. Positions are in meters, velocities in meters per second, masses in kilograms, and `time` in seconds. This run has 1346 rows: 2 bodies at 673 recorded times.
+
+```{python}
+sim.shape
+```
+
+Every column is available for plotting, filtering, or analysis. Since this is an ordinary pandas DataFrame, the pattern for almost every custom plot is the same: add the column you want to see, then loop over `groupby("id")` and draw one line per body.
+
+## Custom matplotlib visualizations
+
+### Distance over time
+
+In the Earth-Moon system, `plot_orbits()` cannot show both bodies well. Earth moves far less than the Moon does, a few percent of the width of the Moon's orbit, so Earth's path is a small smudge near the center. A more useful picture plots each body's distance from the barycenter over time.
+
+This system was set up with Earth at rest at the origin, so the barycenter drifts slowly as the pair moves. [`shift_reference_frame()`](../reference/shift_reference_frame.qmd) with `"barycenter"` removes that drift. After the shift, the distance from the barycenter is the length of the position vector:
+
+```{python}
+bary = orb.shift_reference_frame(sim, "barycenter")
+bary["r"] = np.sqrt(bary["x"]**2 + bary["y"]**2 + bary["z"]**2)
+bary["day"] = bary["time"] / orb.seconds_per_day
+
+fig, ax = plt.subplots(figsize=(7, 4))
+for body, g in bary.groupby("id", sort=False):
+    ax.plot(g["day"], g["r"], label=body)
+ax.set_yscale("log")
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Distance (m)")
+ax.set_title("Distance from Barycenter Over Time")
+ax.legend(title="Body", frameon=False);
+```
+
+`groupby("id", sort=False)` hands you one sub-table per body, in the order the bodies were added. The y axis is logarithmic because the two distances differ by a factor of about 81, the ratio of the two masses. The same grouping gives a quick numerical summary:
+
+```{python}
+bary.groupby("id", sort=False)["r"].agg(["min", "max"])
+```
+
+Earth stays between about 4620 and 4670 km from the barycenter, which is inside the planet. The Moon stays between about 376,000 and 380,000 km from it. The distances are not constant because `speed_moon` is a little less than the circular speed at this starting distance. The Moon starts at the far point of a slightly eccentric orbit and falls a little closer before coming back.
+
+### Coloring by time
+
+A line plot of an orbit does not show which way the body is moving or how long each part took. Coloring by time fixes that. Here is the Moon's path relative to Earth, with `keep_center=False` to drop Earth's own rows, which would all sit at the origin:
+
+```{python}
+moon = orb.shift_reference_frame(sim, "Earth", keep_center=False)
+
+fig, ax = plt.subplots(figsize=(6.5, 5.5))
+points = ax.scatter(moon["x"], moon["y"], c=moon["time"] / orb.seconds_per_day,
+                    cmap="viridis", s=6)
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_title("Lunar Orbit (Earth-Centered)")
+fig.colorbar(points, ax=ax, label="Day");
+```
+
+`ax.scatter()` takes one color value per point through `c=`, and with hourly steps the points are close enough to read as a line. `ax.set_aspect("equal")` gives both axes the same scale, so the orbit keeps its true shape. The colors run from dark at day 0 to yellow at day 28, counterclockwise.
+
+### Coloring by speed
+
+The same idea works for any quantity you can compute from the columns. Speed is the most useful one, because it shows Kepler's second law at a glance: a body moves fastest where it is closest to its parent.
+
+For a continuous colored line instead of dots, matplotlib offers `LineCollection`. It draws many short segments and colors each one separately. This example puts a small body on an eccentric orbit ($e = 0.6$) around the Sun with [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd):
+
+```{python}
+from matplotlib.collections import LineCollection
+
+comet_sim = (
+    orb.create_system()
+    .add_sun()
+    .add_body_keplerian("Comet", mass=1e14, a=orb.distance_earth_sun, e=0.6, parent="Sun")
+    .simulate(time_step=orb.seconds_per_day / 4, duration=orb.seconds_per_year)
+)
+
+comet = orb.shift_reference_frame(comet_sim, "Sun", keep_center=False)
+comet["speed"] = np.sqrt(comet["vx"]**2 + comet["vy"]**2 + comet["vz"]**2)
+
+xy = comet[["x", "y"]].to_numpy()
+segments = np.stack([xy[:-1], xy[1:]], axis=1)   # one (start, end) pair per step
+
+fig, ax = plt.subplots(figsize=(7, 5))
+lines = LineCollection(segments, cmap="plasma", linewidth=2.5)
+lines.set_array(comet["speed"].to_numpy()[:-1] / 1000)
+ax.add_collection(lines)
+ax.plot(0, 0, "o", color="goldenrod", markersize=10)
+ax.autoscale()
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_title("Speed Along an Eccentric Orbit")
+fig.colorbar(lines, ax=ax, label="Speed (km/s)");
+```
+
+The orbit starts at periapsis, on the right, where the comet is closest to the Sun and fastest. The range of speeds, in km/s, is:
+
+```{python}
+(comet["speed"].agg(["min", "max"]) / 1000).round(2)
+```
+
+The comet moves at about 59.6 km/s at periapsis and 14.9 km/s at apoapsis. The ratio is 4, which is what conservation of angular momentum predicts: $v_\text{peri} / v_\text{apo} = (1 + e) / (1 - e) = 1.6 / 0.4 = 4$.
+
+### Distance between two bodies
+
+A distance between two bodies needs their positions side by side. Shifting the reference frame to one of them is the quickest way to get there, because the other body's position is then the separation vector. Here are Earth and Mars over four years:
+
+```{python}
+planets = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=4 * orb.seconds_per_year)
+)
+
+mars = orb.shift_reference_frame(planets, "Earth")
+mars = mars[mars["id"] == "Mars"]
+separation = np.sqrt(mars["x"]**2 + mars["y"]**2 + mars["z"]**2)
+years = mars["time"] / orb.seconds_per_year
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.plot(years, separation / orb.distance_earth_sun)
+ax.set_xlabel("Time (years)")
+ax.set_ylabel("Earth-Mars distance (au)")
+ax.set_title("Distance Between Earth and Mars");
+```
+
+The y axis is in astronomical units, taken here as `orb.distance_earth_sun`. The distance swings between a close approach, when both planets are on the same side of the Sun, and a far point, when they are on opposite sides:
+
+```{python}
+closest = separation.idxmin()
+farthest = separation.idxmax()
+{
+    "closest (au)": round(float(separation[closest] / orb.distance_earth_sun), 3),
+    "on day": round(float(mars.loc[closest, "time"] / orb.seconds_per_day)),
+    "farthest (au)": round(float(separation[farthest] / orb.distance_earth_sun), 3),
+}
+```
+
+Both planets start at their own periapsis here, since `nu` defaults to 0, so the dates are those of this setup and not of the real sky. Pass `nu=` to [`add_planet()`](../reference/OrbitSystem.add_planet.qmd) to start a planet somewhere else on its orbit.
+
+## Composing figures with `ax=`
+
+`plot_orbits()` and [`plot_system()`](../reference/plot_system.qmd) create a new figure by default. Pass `ax=` to draw on axes you made yourself instead. This is how the built-in plots fit into a larger figure: the built-in function fills one panel and your own code fills the rest.
+
+```{python}
+#| fig-width: 10
+#| fig-height: 4.6
+fig, (left, right) = plt.subplots(1, 2, figsize=(10, 4.6))
+
+orb.plot_orbits(planets, three_d=False, ax=left)
+left.set_title("Orbits Around the Sun")
+
+right.plot(years, separation / orb.distance_earth_sun, color="C3")
+right.set_xlabel("Time (years)")
+right.set_ylabel("Earth-Mars distance (au)")
+right.set_title("Distance Between Earth and Mars")
+fig.tight_layout();
+```
+
+`add_planet()` gives Mars its real inclination of 1.85 degrees, so this simulation has motion in z, and `plot_orbits()` would normally return a 3D plotly figure. `three_d=False` asks for the 2D matplotlib plot, which is the only kind that can be drawn on an `Axes`. See [3D plotting](plotting-3d.qmd) for how that choice is made.
+
+The function returns the `Axes` it drew on, so you can keep working with it. Here `plot_system()` draws a snapshot with faint trails, and a few more lines of matplotlib mark the line from Earth to Mars at the closest approach found above:
+
+```{python}
+t_close = mars.loc[closest, "time"]
+ax = orb.plot_system(planets, time=t_close, trails=True, three_d=False)
+
+now = planets[planets["time"] == t_close].set_index("id")
+ax.plot([now.at["Earth", "x"], now.at["Mars", "x"]],
+        [now.at["Earth", "y"], now.at["Mars", "y"]],
+        color="gray", linestyle="--", linewidth=1)
+ax.set_title(f"Closest Approach (day {t_close / orb.seconds_per_day:.0f})");
+```
+
+## A multi-panel figure
+
+Combining these pieces gives a one-page summary of a simulation. This figure shows the comet from earlier four ways: its path, its distance from the Sun, its speed, and the energy of the whole system from [`get_energy()`](../reference/get_energy.qmd).
+
+```{python}
+#| fig-width: 9
+#| fig-height: 7.5
+comet["r"] = np.sqrt(comet["x"]**2 + comet["y"]**2 + comet["z"]**2)
+comet["day"] = comet["time"] / orb.seconds_per_day
+
+energy = orb.get_energy(comet_sim)
+energy["day"] = energy["time"] / orb.seconds_per_day
+
+fig, axes = plt.subplots(2, 2, figsize=(9, 7.5))
+
+orb.plot_orbits(comet_sim, ax=axes[0, 0])
+axes[0, 0].set_title("Trajectory")
+
+axes[0, 1].plot(comet["day"], comet["r"] / orb.distance_earth_sun)
+axes[0, 1].set_ylabel("Distance from Sun (au)")
+axes[0, 1].set_title("Distance")
+
+axes[1, 0].plot(comet["day"], comet["speed"] / 1000, color="C1")
+axes[1, 0].set_ylabel("Speed (km/s)")
+axes[1, 0].set_title("Speed")
+
+for column in ["kinetic", "potential", "energy"]:
+    axes[1, 1].plot(energy["day"], energy[column], label=column)
+axes[1, 1].set_ylabel("Energy (J)")
+axes[1, 1].set_title("Energy")
+axes[1, 1].legend(frameon=False)
+
+for ax in axes.flat[1:]:
+    ax.set_xlabel("Time (days)")
+fig.tight_layout();
+```
+
+The orbit has a semi-major axis of 1 au, so its period is very nearly one year and the run covers one full revolution. Distance and speed mirror each other. Kinetic and potential energy trade back and forth while their sum stays flat. [Conservation](conservation.qmd) looks at that sum much more closely.
+
+## A custom animation
+
+[`animate_system()`](../reference/animate_system.qmd) covers the common case of markers moving along their orbits. For anything else, write a function that draws one frame and hand it to matplotlib's `FuncAnimation`.
+
+The frame here has two panels that stay in step: the comet on its orbit, and its speed up to that moment. Start by picking the times to draw. Thirty evenly spaced steps out of the 1462 recorded ones are enough:
+
+```{python}
+times = np.sort(comet["time"].unique())
+frame_times = times[np.linspace(0, len(times) - 1, 30).round().astype(int)]
+len(times), len(frame_times)
+```
+
+Then write the function that draws the state at one time:
+
+```{python}
+def draw_frame(t, ax_orbit, ax_speed):
+    """Draw the comet's state at time t on the two axes."""
+    past = comet[comet["time"] <= t]
+    now = past.iloc[-1]
+
+    ax_orbit.clear()
+    ax_orbit.plot(comet["x"], comet["y"], color="lightgray", linewidth=1)
+    ax_orbit.plot(past["x"], past["y"], color="C0", linewidth=1.5)
+    ax_orbit.plot(0, 0, "o", color="goldenrod", markersize=9)
+    ax_orbit.plot(now["x"], now["y"], "o", color="C0", markersize=7)
+    ax_orbit.set_aspect("equal")
+    ax_orbit.set_xlabel("X (m)")
+    ax_orbit.set_ylabel("Y (m)")
+    ax_orbit.set_title(f"Day {t / orb.seconds_per_day:.0f}")
+
+    ax_speed.clear()
+    ax_speed.plot(past["day"], past["speed"] / 1000, color="C1")
+    ax_speed.plot(now["day"], now["speed"] / 1000, "o", color="C1")
+    ax_speed.set_xlim(0, comet["day"].max())
+    ax_speed.set_ylim(0, 65)
+    ax_speed.set_xlabel("Time (days)")
+    ax_speed.set_ylabel("Speed (km/s)")
+    ax_speed.set_title("Speed")
+```
+
+Clearing and redrawing each `Axes` is the simplest way to write a frame function. It is not the fastest, but it keeps the drawing code identical to an ordinary static plot. The limits of the speed panel are fixed by hand so that the view does not jump from frame to frame. The orbit panel always draws the whole gray orbit, which fixes its limits too.
+
+Because the function draws an ordinary figure, you can check a single frame before animating anything:
+
+```{python}
+#| fig-width: 9
+#| fig-height: 4
+fig, (ax_orbit, ax_speed) = plt.subplots(1, 2, figsize=(9, 4))
+draw_frame(frame_times[11], ax_orbit, ax_speed)
+fig.tight_layout();
+```
+
+Then let `FuncAnimation` call it once per frame and save the result as a GIF. Saving needs the pillow package, and it is the slow step: every frame is drawn and encoded, so keep the number of frames modest.
+
+```{python}
+#| output: false
+from matplotlib.animation import FuncAnimation
+
+fig, (ax_orbit, ax_speed) = plt.subplots(1, 2, figsize=(8, 3.6), dpi=70)
+fig.subplots_adjust(left=0.09, right=0.98, bottom=0.16, top=0.9, wspace=0.3)
+
+anim = FuncAnimation(fig, draw_frame, frames=frame_times, fargs=(ax_orbit, ax_speed))
+anim.save("custom-visualization-comet.gif", writer="pillow", fps=8)
+plt.close(fig)
+```
+
+![](custom-visualization-comet.gif)
+
+The comet races through periapsis and crawls around the far end of its orbit, and the speed curve shows the same thing as a number.
+
+## Custom plotly visualizations
+
+Just as `plot_orbits()` is a quick convenience for 2D work, `plot_orbits_3d()` is a quick convenience for 3D. Both are intentionally simple. When you need more control, the simulation DataFrame works just as well with plotly as it does with matplotlib.
+
+For example, you can color a trajectory by speed instead of by body. This is the tilted lunar orbit from [3D plotting](plotting-3d.qmd):
+
+```{python}
+import plotly.graph_objects as go
+
+tilt = np.radians(5)
+
+sim3d = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon,
+              x=orb.distance_earth_moon,
+              vy=orb.speed_moon * np.cos(tilt),
+              vz=orb.speed_moon * np.sin(tilt))
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+sim3d["speed"] = np.sqrt(sim3d["vx"]**2 + sim3d["vy"]**2 + sim3d["vz"]**2)
+
+moon3d = sim3d[sim3d["id"] == "Moon"]
+earth3d = sim3d[sim3d["id"] == "Earth"]
+
+fig = go.Figure()
+fig.add_trace(go.Scatter3d(
+    x=moon3d["x"], y=moon3d["y"], z=moon3d["z"],
+    mode="lines", name="Moon",
+    line=dict(width=5, color=moon3d["speed"], colorscale="Viridis",
+              showscale=True, colorbar=dict(title="Speed (m/s)")),
+))
+fig.add_trace(go.Scatter3d(
+    x=earth3d["x"], y=earth3d["y"], z=earth3d["z"],
+    mode="lines", name="Earth",
+    line=dict(width=3, color="gray"),
+))
+fig.update_layout(
+    title="Lunar Orbit Around Earth",
+    showlegend=False,
+    scene=dict(xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Z (m)",
+               aspectmode="data"),
+)
+fig
+```
+
+`aspectmode="data"` gives the three axes one scale, the 3D equivalent of `ax.set_aspect("equal")`. The speeds are measured in the simulation's own frame, where Earth starts at rest.
+
+The point is the same as with matplotlib. `simulate()` returns a standard DataFrame, so you have the whole plotly API available for anything the built-in plotting functions do not cover.
+
+The built-in 3D functions also return ordinary plotly figures, so a middle path is to start from one and modify it:
+
+```{python}
+fig = orb.plot_orbits_3d(sim3d)
+fig.update_traces(line=dict(width=7), selector=dict(name="Moon"))
+fig.update_layout(title="Tilted Lunar Orbit",
+                  scene_camera=dict(eye=dict(x=1.4, y=-1.4, z=0.6)))
+fig
+```
+
+## Using polars
+
+Everything on this page used pandas, the default. If you prefer polars, ask for it with `backend="polars"` and the same recipes apply, with polars expressions in place of the pandas ones. The built-in plotting functions accept either kind of DataFrame. See [pandas or polars](pandas-or-polars.qmd).

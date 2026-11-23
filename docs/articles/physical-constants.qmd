@@ -1,0 +1,155 @@
+---
+title: "Built-In Physical Constants"
+description: "The masses, distances, orbital speeds, and time conversions that ship with pyorbiter, all in SI units."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+`pyorbiter` ships a set of real-world masses, distances, and orbital speeds so you do not have to look them up every time. All values are in SI units: kilograms, meters, and meters per second.
+
+Every constant is a plain Python number at the top level of the package:
+
+```{python}
+import pyorbiter as orb
+
+orb.mass_earth, orb.distance_earth_sun, orb.speed_earth
+```
+
+The tables on this page are built from the package itself when the site is rendered, so they always show the values you get when you import it. The names come from `orb.constants.__all__`, and this small helper turns the ones that share a prefix into a table:
+
+```{python}
+import pandas as pd
+
+def constants_table(prefix, unit, fmt):
+    names = [name for name in orb.constants.__all__ if name.startswith(prefix)]
+    names.sort(key=lambda name: getattr(orb, name))
+    return pd.DataFrame({
+        "value": [format(getattr(orb, name), fmt) for name in names],
+        "unit": unit,
+    }, index=pd.Index(names, name="constant"))
+```
+
+## The gravitational constant
+
+```{python}
+constants_table("gravitational", "m^3 kg^-1 s^-2", ".4e")
+```
+
+This is the default `G` of [`create_system()`](../reference/create_system.qmd).
+
+## Time conversions
+
+```{python}
+constants_table("seconds", "s", ",.0f")
+```
+
+A year here is a Julian year of 365.25 days. These are the natural way to write `time_step` and `duration`, for example `duration=28 * orb.seconds_per_day`.
+
+## Masses
+
+```{python}
+constants_table("mass", "kg", ".3e")
+```
+
+## Orbital distances (semi-major axes)
+
+```{python}
+constants_table("distance", "m", ".3e")
+```
+
+`distance_earth_moon` is the Moon's distance from Earth. The others are distances from the Sun.
+
+## Mean orbital speeds
+
+```{python}
+constants_table("speed", "m/s", ",.0f")
+```
+
+`speed_moon` is the Moon's speed around Earth. The others are speeds around the Sun.
+
+## Using the constants
+
+With the constants, the Earth-Moon example can be written without a single number looked up by hand:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+orb.plot_orbits(sim);
+```
+
+The same constants are behind [`add_sun()`](../reference/OrbitSystem.add_sun.qmd), [`add_planet()`](../reference/OrbitSystem.add_planet.qmd), and [`load_solar_system()`](../reference/load_solar_system.qmd), which use these masses and semi-major axes together with each body's eccentricity and orientation.
+
+## Why the "distance" constants are semi-major axes
+
+Orbital distances are not truly constant. Every orbit is an ellipse, so the separation between two bodies changes continuously through each revolution. The values provided here are **semi-major axes**: the average of the closest approach (periapsis) and the farthest point (apoapsis).
+
+The semi-major axis $a$ is the most characteristic length scale of an elliptical orbit. It sets the orbital period through Kepler's third law,
+
+$$
+T = 2\pi \sqrt{\frac{a^3}{G M}},
+$$
+
+where $M$ is the mass of the central body (strictly, the sum of the two masses). For Earth around the Sun the constants give a period of very nearly one year:
+
+```{python}
+import math
+
+period = 2 * math.pi * math.sqrt(
+    orb.distance_earth_sun**3 / (orb.gravitational_constant * orb.mass_sun)
+)
+period / orb.seconds_per_day
+```
+
+You can see the distance vary in a simulation. `add_planet()` gives Earth its real eccentricity of 0.0167, so over one year the Earth-Sun separation swings between perihelion and aphelion:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+earth = orb.shift_reference_frame(sim, "Sun")
+earth = earth[earth["id"] == "Earth"]
+distance_km = (earth["x"] ** 2 + earth["y"] ** 2 + earth["z"] ** 2) ** 0.5 / 1000
+
+distance_km.agg(["min", "max", "mean"]) / 1e6
+```
+
+The separation runs from about 147.1 million km at perihelion to about 152.1 million km at aphelion. The semi-major axis of 149.6 million km sits in the middle of that range, and it is the value that gives the correct one-year period.
+
+## Why the "speed" constants give nearly circular orbits
+
+Paired with the mean orbital speed, the semi-major axis produces a nearly circular trajectory that closely approximates the real orbit. The speed of a circular orbit of radius $a$ is
+
+$$
+v = \sqrt{\frac{G M}{a}},
+$$
+
+and the built-in mean speeds are close to that value for each planet:
+
+```{python}
+planets = ["mercury", "venus", "earth", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto"]
+
+pd.DataFrame({
+    "mean speed (m/s)": [getattr(orb, f"speed_{p}") for p in planets],
+    "circular speed (m/s)": [
+        round(math.sqrt(orb.gravitational_constant * orb.mass_sun / getattr(orb, f"distance_{p}_sun")))
+        for p in planets
+    ],
+}, index=pd.Index(planets, name="planet"))
+```
+
+The two columns agree to within about one percent (Mercury is the furthest off), and for most planets much more closely. The small differences are why a body started with `x=orb.distance_earth_sun, vy=orb.speed_earth` traces a slightly elliptical orbit and not a perfect circle.
+
+If you want a clearly elliptical orbit, start the body at periapsis with a faster-than-circular velocity, or at apoapsis with a slower one. [Building Two-Body Orbits](building-two-body-orbits.qmd) works through the choices, and [Keplerian Orbital Elements](keplerian-elements.qmd) shows how to ask for a given eccentricity directly.

@@ -1,0 +1,225 @@
+---
+title: "Quick Start Guide"
+description: "Install pyorbiter, run a first simulation, and plot, animate, inspect, and save the result."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+## Installation
+
+`pyorbiter` is not on PyPI yet. Install it from GitHub:
+
+```bash
+pip install "git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+This installs numpy, pandas, and matplotlib with it. For interactive 3D plots, polars DataFrames, and saving animations as GIFs, add the optional extras:
+
+```bash
+pip install "pyorbiter[plotly,polars,gif] @ git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+## Your first simulation in 30 seconds
+
+`pyorbiter` is built around a simple chained workflow: create a system, add bodies, simulate, and plot.
+
+```{python}
+import pyorbiter as orb
+
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+orb.plot_orbits(sim);
+```
+
+That is a 28-day lunar orbit in a handful of lines. Here is what each step does:
+
+1. [`create_system()`](../reference/create_system.qmd) starts an empty system with the standard gravitational constant $G$.
+2. [`add_body()`](../reference/OrbitSystem.add_body.qmd) places a body with a given mass, position, and velocity. Positions are in meters and velocities in meters per second. The built-in constants (`orb.mass_earth`, `orb.distance_earth_moon`, and so on) save you from looking anything up.
+3. [`simulate()`](../reference/simulate_system.qmd) runs the N-body integration forward in time. `time_step` is the number of seconds per integration step, and `duration` is the total time to simulate.
+4. [`plot_orbits()`](../reference/plot_orbits.qmd) draws a quick 2D trajectory plot with matplotlib.
+
+Each `add_*` method returns a new system and leaves the original untouched, so the calls chain. The parentheses around the whole expression are only there so that Python lets it span several lines. The semicolon after the plot call keeps a notebook from printing the returned object under the figure. It is not needed in a script.
+
+## Customizing the plot
+
+`plot_orbits()` returns a matplotlib `Axes` for planar (2D) simulations and an interactive plotly figure for simulations with any motion in `z`. You can force either one with `three_d=True` or `three_d=False`. Because the 2D case returns a regular `Axes`, you can keep drawing on it, change its title and labels, or pass in your own with `ax=`.
+
+A common annoyance is that the central body in a two-body system can be invisible. `plot_orbits()` draws each body as a line along its trajectory, and a much more massive body barely moves, so its line is too small to see. The Sun in a Sun-Earth simulation is the classic example. It is there, but its loop around the barycenter is well inside the Sun itself. The simplest fix is to drop a marker at the origin:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+ax = orb.plot_orbits(sim)
+ax.plot(0, 0, "o", markersize=12, color="C0")
+ax.set_title("Earth-Sun Orbit");
+```
+
+`"C0"` is the first color in matplotlib's color cycle, which is the color `plot_orbits()` gave the Sun, so the marker matches the legend. This works because the Sun sits essentially at the origin throughout the simulation. For systems where the central body moves a noticeable amount, take its position from the simulation DataFrame instead of hardcoding `(0, 0)`.
+
+## Watching the orbit in motion
+
+Static plots are useful, but you can also play the simulation forward with [`animate_system()`](../reference/animate_system.qmd). With `trails=True` each body leaves a short wake of recent positions behind it. Pass `path=` to save the animation as a GIF:
+
+```{python}
+#| output: false
+orb.animate_system(sim, fps=12, duration=3, trails=True, path="quick-start-earth-orbit.gif")
+```
+
+![](quick-start-earth-orbit.gif)
+
+`animate_system()` is the animated counterpart to [`plot_system()`](../reference/plot_system.qmd). It samples the simulation down to roughly `fps * duration` evenly spaced frames, then draws them with matplotlib and returns a `FuncAnimation`. Saving a GIF needs the pillow package, which the `gif` extra installs. Like the static plotters, it switches to a 3D version ([`animate_system_3d()`](../reference/animate_system_3d.qmd), an interactive plotly figure with a play button) as soon as any body has motion in `z`.
+
+## Adding more bodies
+
+`pyorbiter` is a full N-body engine, so you can add as many bodies as you want. Each one gravitationally interacts with every other.
+
+For real solar system bodies, there are two ways to add them.
+
+**The manual way.** Use `add_body()` with explicit positions and velocities. This gives you full control and works for any body, real or fictional:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .add_body("Venus", mass=orb.mass_venus, x=orb.distance_venus_sun, vy=orb.speed_venus)
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim);
+```
+
+Venus completes more than one full orbit in the time Earth takes to go around once. The inner orbit is both smaller and faster.
+
+**The easy way.** Use [`add_sun()`](../reference/OrbitSystem.add_sun.qmd) and [`add_planet()`](../reference/OrbitSystem.add_planet.qmd), which fill in real masses and orbital elements automatically. Any orbital element can be overridden for "what if" scenarios:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year * 2)
+)
+
+orb.plot_orbits(sim, three_d=False);
+```
+
+The real orbit of Mars is tilted slightly out of Earth's orbital plane, so this simulation has motion in `z`. `three_d=False` asks for the flat, top-down view anyway.
+
+[`load_solar_system()`](../reference/load_solar_system.qmd) gives you the whole thing in one call:
+
+```{python}
+sim = orb.load_solar_system().simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+
+orb.plot_orbits(sim, three_d=False);
+```
+
+Under the hood, these use Keplerian orbital elements, a way to describe an orbit by its shape and orientation instead of raw positions and velocities. See [Keplerian Orbital Elements](keplerian-elements.qmd) for the full explanation.
+
+## Removing bodies
+
+You can drop bodies from a system with [`remove_body()`](../reference/OrbitSystem.remove_body.qmd). This is handy when you want to start from `load_solar_system()` but do not need every body:
+
+```{python}
+sim = (
+    orb.load_solar_system()
+    .remove_body(["Pluto", "Moon"])
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim, three_d=False);
+```
+
+`remove_body()` accepts a single name or a list of names and works anywhere in the chain, before or after adding bodies, but always before simulating.
+
+## The output is just a DataFrame
+
+`simulate()` returns a standard pandas DataFrame. You can use pandas, matplotlib, plotly, or any other tool on it:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+sim.head()
+```
+
+Each row is one body at one point in time, with columns for the body's name (`id`), its mass, position (`x`, `y`, `z`), velocity (`vx`, `vy`, `vz`), and the time.
+
+```{python}
+sim.shape
+```
+
+There are 673 recorded times (hour 0 through hour 672) and two bodies, which gives 1346 rows.
+
+Ordinary pandas operations work as you would expect. For example, the Moon's speed at the start and at the end of the run:
+
+```{python}
+moon = sim[sim["id"] == "Moon"]
+speed = (moon["vx"] ** 2 + moon["vy"] ** 2 + moon["vz"] ** 2) ** 0.5
+speed.iloc[[0, -1]]
+```
+
+The settings of the run travel with the result in `sim.attrs`:
+
+```{python}
+sim.attrs
+```
+
+If you prefer polars, ask for it with `backend="polars"`, or switch the default once with `orb.set_backend("polars")`. See [pandas or polars](pandas-or-polars.qmd).
+
+## Saving and sharing systems
+
+You can save a system to disk and restore it later. [`save_system()`](../reference/save_system.qmd) writes a small JSON file holding the bodies and the gravitational constant, and [`load_system()`](../reference/load_system.qmd) reads it back. A system also has `save()` and `export_bodies()` methods that do the same job in a chain:
+
+```{python}
+import tempfile
+from pathlib import Path
+
+system = orb.create_system().add_sun().add_planet("Earth", parent="Sun")
+
+folder = Path(tempfile.mkdtemp())
+system.save(folder / "my_system.json")
+
+restored = orb.load_system(folder / "my_system.json")
+restored
+```
+
+To share the body table as a CSV, for collaborators or a spreadsheet, use [`export_bodies()`](../reference/export_bodies.qmd):
+
+```{python}
+import pandas as pd
+
+system.export_bodies(folder / "bodies.csv")
+pd.read_csv(folder / "bodies.csv")
+```
+
+`save_system()` and `load_system()` preserve the whole system, including $G$. `export_bodies()` writes a plain CSV with just the body table, which anyone can open.
+
+## Next steps
+
+- [The Physics](the-physics.qmd): the math behind the simulation.
+- [Examples](examples.qmd): more complex systems, including binary stars.
+- [Unstable Orbits](unstable-orbits.qmd): why most random configurations are chaotic.
+- [3D Plotting](plotting-3d.qmd): interactive 3D visualization with plotly.
+- [Custom Visualization](custom-visualization.qmd): build your own plots with matplotlib and plotly.
+- [Physical Constants](physical-constants.qmd): all built-in masses, distances, and speeds.
+- [Function reference](../reference/index.qmd): every function and method.

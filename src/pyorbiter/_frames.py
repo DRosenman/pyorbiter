@@ -25,12 +25,56 @@ _run_settings: dict[int, tuple[weakref.ref, dict]] = {}
 
 
 def set_backend(backend: str) -> None:
-    """Choose the DataFrame library pyorbiter returns: ``"pandas"`` or ``"polars"``.
+    """Choose the DataFrame library pyorbiter returns.
 
-    This sets the default for :func:`simulate_system` and :func:`get_bodies`;
-    both also take a ``backend`` argument for a single call. Functions that
-    are *given* a DataFrame always return the same kind they were given (a
-    polars LazyFrame is collected, and a polars DataFrame comes back).
+    Sets the default kind of DataFrame for the functions that create one from
+    a system: ``simulate_system`` and ``get_bodies``. Both also take a
+    ``backend`` argument that overrides the default for a single call. The
+    setting lasts for the rest of the Python session.
+
+    Functions that are given a DataFrame (the analysis functions,
+    ``continue_simulation``) ignore this setting and return the same kind they
+    were given. A polars LazyFrame is collected, and a polars DataFrame comes
+    back.
+
+    Parameters
+    ----------
+    backend : str
+        ``"pandas"`` or ``"polars"``. pyorbiter starts with ``"pandas"``.
+
+    Returns
+    -------
+    None
+        Called for its side effect.
+
+    Raises
+    ------
+    ValueError
+        If ``backend`` is not ``"pandas"`` or ``"polars"``.
+    ImportError
+        If ``backend`` is ``"polars"`` and polars is not installed. The
+        default is left unchanged. Install it with ``pip install polars``.
+
+    See Also
+    --------
+    get_backend : See which library is the current default.
+    simulate_system : Takes a ``backend`` argument for a single call.
+    run_settings : Read the settings of a run from either kind of DataFrame.
+
+    Examples
+    --------
+    Switch to polars, simulate, and switch back.
+
+    ```{python}
+    import pyorbiter as orb
+
+    orb.set_backend("polars")
+    sim = orb.create_system().add_sun().add_planet("Earth", parent="Sun").simulate(
+        time_step=orb.seconds_per_day, duration=30 * orb.seconds_per_day)
+
+    orb.set_backend("pandas")
+    sim.head()
+    ```
     """
     global _default_backend
     backend = _check_backend(backend)
@@ -40,7 +84,30 @@ def set_backend(backend: str) -> None:
 
 
 def get_backend() -> str:
-    """The DataFrame library pyorbiter currently returns by default."""
+    """The DataFrame library pyorbiter currently returns by default.
+
+    This is the library used by ``simulate_system`` and ``get_bodies`` when
+    their ``backend`` argument is left as ``None``. Change it with
+    ``set_backend``.
+
+    Returns
+    -------
+    str
+        ``"pandas"`` or ``"polars"``. It is ``"pandas"`` unless ``set_backend``
+        has been called.
+
+    See Also
+    --------
+    set_backend : Change the default.
+
+    Examples
+    --------
+    ```{python}
+    import pyorbiter as orb
+
+    orb.get_backend()
+    ```
+    """
     return _default_backend
 
 
@@ -63,7 +130,7 @@ def _polars():
         import polars as pl
     except ImportError:
         raise ImportError("The polars backend needs the 'polars' package. "
-                          'Install it with: pip install "pyorbiter[polars]"') from None
+                          "Install it with: pip install polars") from None
     return pl
 
 
@@ -132,19 +199,81 @@ def _record_run_settings(frame, settings: dict) -> None:
 
 
 def run_settings(sim_data) -> dict:
-    """The settings of the run that produced ``sim_data``.
+    """The settings of the run that produced a simulation.
 
-    A dict with ``G``, ``softening``, ``method`` and ``time_step`` for the
-    output of :func:`simulate_system`, :func:`continue_simulation` or
-    :func:`shift_reference_frame`. For a pandas DataFrame this is a copy of
-    ``sim_data.attrs``, which pandas carries through most operations.
+    ``simulate_system`` records the gravitational constant, softening length,
+    integrator and time step it used alongside its result. The analysis
+    functions read them from there, so that ``get_energy``, for example, uses
+    the same ``G`` and softening as the run. This function returns them as a
+    dict, and works the same way for pandas and polars results.
+
+    Parameters
+    ----------
+    sim_data : DataFrame
+        The output of ``simulate_system``, ``continue_simulation`` or
+        ``shift_reference_frame``, as a pandas or polars DataFrame.
+
+    Returns
+    -------
+    dict
+        The recorded settings:
+
+        - ``G``: gravitational constant in m^3 kg^-1 s^-2.
+        - ``softening``: softening length in meters.
+        - ``method``: the integrator, ``"verlet"``, ``"euler_cromer"`` or
+          ``"euler"``.
+        - ``time_step``: time between recorded states in seconds. After
+          ``continue_simulation`` this is the step of the latest segment.
+
+        The dict is a copy, so changing it does not change the DataFrame. It
+        is empty if nothing is recorded for ``sim_data``.
+
+    See Also
+    --------
+    simulate_system : Records the settings.
+    continue_simulation : Reuses the recorded settings for the next segment.
+    get_energy : Uses the recorded ``G`` and softening.
+    set_backend : Choose between pandas and polars results.
+
+    Notes
+    -----
+    For a pandas DataFrame the settings live in ``sim_data.attrs``, and this
+    function returns a copy of that dict. pandas carries ``attrs`` through
+    most operations, such as filtering rows.
 
     A polars DataFrame has nowhere to keep them, so they are remembered only
     for the exact DataFrame pyorbiter returned. Anything you derive from it
     (``filter``, ``sort``, ``with_columns``, ``clone``, a file read back)
-    gives an empty dict here. For a run that did not use the defaults, pass
-    ``G`` and ``softening`` to the analysis functions, and ``G``, ``softening``
-    and ``method`` to :func:`continue_simulation`, yourself.
+    gives an empty dict here. For a polars run that did not use the defaults,
+    pass ``G`` and ``softening`` to the analysis functions, and ``G``,
+    ``softening`` and ``method`` to ``continue_simulation``, yourself.
+
+    Examples
+    --------
+    ```{python}
+    import pyorbiter as orb
+
+    sim = orb.create_system().add_sun().add_planet("Earth", parent="Sun").simulate(
+        time_step=orb.seconds_per_day, duration=30 * orb.seconds_per_day,
+        softening=1e4)
+
+    orb.run_settings(sim)
+    ```
+
+    A polars result keeps its settings only until you derive a new DataFrame
+    from it.
+
+    ```{python}
+    import polars as pl
+    import pyorbiter as orb
+
+    sim = orb.create_system().add_sun().add_planet("Earth", parent="Sun").simulate(
+        time_step=orb.seconds_per_day, duration=30 * orb.seconds_per_day,
+        backend="polars")
+    earth = sim.filter(pl.col("id") == "Earth")
+
+    {"returned by pyorbiter": orb.run_settings(sim), "after filter": orb.run_settings(earth)}
+    ```
     """
     if isinstance(sim_data, pd.DataFrame):
         return dict(sim_data.attrs)

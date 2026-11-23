@@ -1,0 +1,261 @@
+---
+title: "Reference Frames"
+description: "Use shift_reference_frame to view the same simulation from any body, or from the center of mass, without running it again."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+## The problem of scale
+
+Every N-body simulation has to pick an origin, some point that sits at (0, 0, 0). `pyorbiter` uses the coordinate system you set up: whatever body you placed at the origin starts there, and everything else is measured relative to that point. This is your **reference frame**.
+
+The trouble is that the natural reference frame for building a simulation is not always the best one for understanding the results. Consider the Sun-Earth-Moon system. The obvious way to set it up is heliocentric, with the Sun at the origin:
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .add_body("Moon", mass=orb.mass_moon,
+              x=orb.distance_earth_sun + orb.distance_earth_moon,
+              vy=orb.speed_earth + orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim);
+```
+
+At this scale the Earth-Moon distance (about 384,000 km) is lost against the Earth-Sun distance (about 150 million km). The Moon's trajectory lies on top of the Earth's, and the Sun barely moves, so [`plot_orbits()`](../reference/plot_orbits.qmd) shows what looks like a single circular track. The physics is fine. The perspective is wrong.
+
+## Shifting the reference frame
+
+[`shift_reference_frame()`](../reference/shift_reference_frame.qmd) fixes this by applying a coordinate transformation. At every time step, it subtracts the position and velocity of a chosen body from those of every body:
+
+$$
+\vec{r}'_i(t) = \vec{r}_i(t) - \vec{r}_{\text{center}}(t) \qquad \vec{v}'_i(t) = \vec{v}_i(t) - \vec{v}_{\text{center}}(t)
+$$
+
+The chosen body ends up fixed at the origin, and every other body's trajectory shows its motion *relative to that body*. No physics changes. The forces and accelerations were worked out when the simulation ran. You are only moving the camera.
+
+```{python}
+earth_view = orb.shift_reference_frame(sim, "Earth")
+earth_view.head(6)
+```
+
+Earth's rows are now zero in all six state columns, the Sun starts one Earth-Sun distance away on the other side, and the Moon is 384,400 km from the origin moving at 1,022 m/s. The `id`, `mass` and `time` columns are untouched.
+
+Plotting the shifted data with the Earth dropped and the Sun filtered out shows the Moon's orbit:
+
+```{python}
+moon = orb.shift_reference_frame(sim, "Earth", keep_center=False)
+moon = moon[moon["id"] == "Moon"]
+
+ax = orb.plot_orbits(moon)
+ax.plot(0, 0, "o", color="C1", label="Earth")
+ax.legend(title="Body")
+ax.set_title("The Moon, seen from Earth");
+```
+
+This is the geocentric view: the same system, seen from a different place. The Moon traces its familiar near-circular orbit, a little differently on each pass because the Sun keeps tugging on it.
+
+## How it works
+
+The function signature is:
+
+```python
+orb.shift_reference_frame(sim_data, center_id, keep_center=True)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sim_data` | DataFrame | required | Output of `simulate_system()` or `.simulate()`, pandas or polars |
+| `center_id` | `str` | required | `id` of the body to place at (0, 0, 0), or `"barycenter"` for the center of mass |
+| `keep_center` | `bool` | `True` | Keep the center body's rows in the output? |
+
+The transformation operates on all six phase-space coordinates (`x`, `y`, `z`, `vx`, `vy`, `vz`) at once. At each time step, the function takes the center body's state and subtracts it from every body in the system. The result is a DataFrame with the same columns as the input, of the same kind (pandas in, pandas out; polars in, polars out), so it goes straight into the plotting and analysis functions. The run settings recorded with the simulation are carried over:
+
+```{python}
+orb.run_settings(earth_view)
+```
+
+Asking for a body that is not in the simulation raises a `ValueError`.
+
+## Keeping or removing the center body
+
+By default, `keep_center=True` leaves the center body in the output. Its coordinates are all zero at every time step. In a plot of trajectories it is a line of zero length, which draws nothing, but it still appears in the legend.
+
+Set `keep_center=False` to drop the center body entirely. This is the better choice when you are feeding the shifted data into a custom plot or analysis and do not need rows stuck at zero:
+
+```{python}
+days = moon["time"] / orb.seconds_per_day
+
+fig, ax = plt.subplots(figsize=(7, 6))
+points = ax.scatter(moon["x"], moon["y"], c=days, s=2, cmap="viridis")
+fig.colorbar(points, label="Day")
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_title("Lunar Orbit (Earth-Centered)");
+```
+
+## Multiple perspectives on the same data
+
+`shift_reference_frame()` does not modify the underlying physics. It only translates coordinates, so you can call it as many times as you like on the same simulation to explore different viewpoints. There is no need to run `simulate()` again.
+
+```{python}
+fig, axes = plt.subplots(1, 3, figsize=(13, 4.6))
+
+for ax, center in zip(axes, ["Sun", "Earth", "Moon"]):
+    orb.plot_orbits(orb.shift_reference_frame(sim, center), ax=ax)
+    ax.set_title(f"Centered on the {center}")
+    ax.legend(title="Body", loc="center", fontsize=8)
+
+fig.tight_layout()
+```
+
+From the Sun, the Earth and Moon share one track. From the Earth, it is the Sun that sweeps a circle 150 million km in radius, once a year, and the Moon's orbit is too small to see at that scale. That is why the earlier plot filtered the Sun out.
+
+The Moon-centered (selenocentric) view is the most interesting of the three. The Sun's path is no longer a clean circle. It has a ripple in it, roughly one bump per lunar month, because the Moon itself is swinging around the Earth while both go around the Sun. Zooming in on the Earth in the same frame shows the other half of the story:
+
+```{python}
+moon_view = orb.shift_reference_frame(sim, "Moon", keep_center=False)
+
+ax = orb.plot_orbits(moon_view[moon_view["id"] == "Earth"])
+ax.plot(0, 0, "o", color="C2", label="Moon")
+ax.legend(title="Body")
+ax.set_title("The Earth, seen from the Moon");
+```
+
+From the Moon's perspective, the Earth appears to orbit *it*, at the same distance the Moon orbits the Earth. This is a matter of perspective only. The physics does not care which body you call the center.
+
+## The barycenter
+
+There is one center that is not a body. Passing `"barycenter"` shifts to the mass-weighted center of the whole system:
+
+$$\vec{R} = \frac{\sum_i m_i \vec{r}_i}{\sum_i m_i}, \qquad \vec{V} = \frac{\sum_i m_i \vec{v}_i}{\sum_i m_i}$$
+
+```{python}
+bary = orb.shift_reference_frame(sim, "barycenter")
+bary.head(3)
+```
+
+No body sits at the origin in this frame, and `keep_center` has no effect, because the barycenter has no rows to keep or drop. The Sun is about 455 km from the origin and moving at 9 cm/s. That is its reflex motion: as the Earth and Moon go around, the Sun goes around the common center of mass too, on a much smaller circle.
+
+```{python}
+sun = bary[bary["id"] == "Sun"]
+
+ax = orb.plot_orbits(sun)
+ax.plot(0, 0, "k+", markersize=12)
+ax.set_title("The Sun's wobble around the barycenter");
+```
+
+The barycentric frame is special for another reason. With no outside forces, the barycenter moves in a straight line at constant speed, so this frame is *inertial*, and total momentum is zero in it. A frame centered on a body is not inertial, because the body accelerates. That matters when you check conservation laws: energy, momentum and angular momentum are conserved in the original frame and in the barycentric frame, but not in a body-centered one. See [Conservation checks](conservation.qmd) for the numbers.
+
+## Analyzing relative velocities
+
+The velocity transformation is as useful as the position transformation. After shifting to Earth's frame, the velocity columns (`vx`, `vy`, `vz`) give each body's velocity *relative to Earth*. You can use this to study how the Moon's orbital speed varies over time:
+
+```{python}
+speed = np.sqrt(moon["vx"]**2 + moon["vy"]**2 + moon["vz"]**2)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.plot(days, speed, color="#2563eb", linewidth=0.8)
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Speed (m/s)")
+ax.set_title("Moon's Orbital Speed Relative to Earth");
+```
+
+```{python}
+print(f"slowest: {speed.min():.0f} m/s   fastest: {speed.max():.0f} m/s")
+```
+
+The speed oscillates between about 1,004 and 1,060 m/s. The Moon speeds up at perigee (closest approach) and slows down at apogee (farthest point), as Kepler's second law predicts. The peaks are not all alike. Their uneven heights and the smaller bumps between them come from the Sun's pull on the Earth-Moon pair, which changes direction relative to the Moon's orbit as the year goes on.
+
+## A binary star system from the planet's view
+
+Reference frame shifts are not limited to the most massive body. You can center on any body in the system. Here is Kepler-16b, a real circumbinary planet, looking back at its two parent stars:
+
+```{python}
+AU = orb.distance_earth_sun
+G = orb.gravitational_constant
+
+m_A = 0.68 * orb.mass_sun
+m_B = 0.20 * orb.mass_sun
+m_planet = 0.333 * orb.mass_jupiter
+
+a_bin = 0.22 * AU
+r_A = a_bin * m_B / (m_A + m_B)
+r_B = a_bin * m_A / (m_A + m_B)
+v_A = np.sqrt(G * m_B**2 / ((m_A + m_B) * a_bin))
+v_B = np.sqrt(G * m_A**2 / ((m_A + m_B) * a_bin))
+
+r_planet = 0.7048 * AU
+v_planet = np.sqrt(G * (m_A + m_B) / r_planet)
+
+kepler16 = (
+    orb.create_system()
+    .add_body("Star A", mass=m_A, x=r_A, vy=v_A)
+    .add_body("Star B", mass=m_B, x=-r_B, vy=-v_B)
+    .add_body("Kepler-16b", mass=m_planet, x=r_planet, vy=v_planet)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 228.8 * 3)
+)
+```
+
+The two stars are placed on opposite sides of their common center of mass, each with the speed that keeps the pair on a circular orbit. From this frame you see the planet's wide orbit and the stars' tight inner dance:
+
+```{python}
+orb.plot_orbits(kepler16);
+```
+
+Now shift to the planet's perspective:
+
+```{python}
+from_planet = orb.shift_reference_frame(kepler16, "Kepler-16b", keep_center=False)
+orb.plot_orbits(from_planet);
+```
+
+From Kepler-16b, both stars trace looping spirograph patterns: a combination of the binary's mutual orbit and the planet's own revolution around the pair. The lighter star, on the larger orbit, makes small closed loops where it appears to turn back on itself. This is a double sunset mapped over time: two stars that circle each other while slowly going around the sky.
+
+## Practical tips
+
+**Do not re-simulate.** `shift_reference_frame()` is a coordinate transformation on the output DataFrame. It is fast and does not run the physics again. Store the simulation result once and shift it as many times as you need.
+
+**Use `keep_center=False` for custom plots.** When building your own matplotlib or plotly figure, the center body sitting at (0, 0) with zero velocity adds a legend entry and a set of rows you have to filter out. Dropping it keeps things clean.
+
+**Chain with pandas.** The output is an ordinary DataFrame, so you can filter, add columns, and summarize after shifting. The pandas `.pipe()` method lets you put the shift inside a method chain. For instance, the distance between the Earth and the Moon over time:
+
+```{python}
+distance = (
+    sim
+    .pipe(orb.shift_reference_frame, "Earth", keep_center=False)
+    .query("id == 'Moon'")
+    .assign(
+        day=lambda d: d["time"] / orb.seconds_per_day,
+        distance_km=lambda d: np.sqrt(d["x"]**2 + d["y"]**2 + d["z"]**2) / 1000,
+    )
+)
+
+ax = distance.plot(x="day", y="distance_km", color="#dc2626", linewidth=0.8,
+                   legend=False, figsize=(7, 4))
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Distance (km)")
+ax.set_title("Earth-Moon Distance Over One Year");
+```
+
+```{python}
+distance["distance_km"].agg(["min", "max"]).round()
+```
+
+With these simple starting conditions the Moon stays between about 370,000 and 388,000 km from the Earth.
+
+**Check conservation before you shift.** [`conserved_quantities()`](../reference/conserved_quantities.qmd) and the other conservation functions should be given the simulation as it came out of `simulate()`, or the barycentric shift. A body-centered frame is accelerating, and momentum and angular momentum are not conserved in it.
+
+**The frame does not affect the physics.** Shifting the reference frame is a post-processing step. The gravitational forces, accelerations, and numerical integration all happened in the original coordinate system. You are only choosing where to stand when you look at the results.

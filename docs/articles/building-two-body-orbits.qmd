@@ -1,0 +1,283 @@
+---
+title: "Building Two-Body Orbits From Scratch"
+description: "How to choose the position, velocity and mass that give a stable two-body orbit, starting from the circular orbit speed."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+Most tutorials hand you a finished orbit and ask you to trust that the numbers are right. This guide goes the other way. It walks through the decisions that shape a two-body orbit, so that by the end you can dial in any stable configuration you want from scratch.
+
+```{python}
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+```
+
+The three things you need to decide are:
+
+1. Where each body starts (its **position**).
+2. How fast the orbiting body is moving and in what direction (its **velocity**).
+3. Which body is heavy enough to sit still at the center (its **mass**).
+
+Get these wrong and the orbit dives close to the star, escapes, or comes out far more eccentric than you intended. Get them right and the result is a clean closed loop that repeats.
+
+## The Convention: Central Body at the Origin
+
+For any two-body problem, the easiest mental model is to put the heavier body at the origin with zero velocity and give the lighter body all the interesting initial conditions. This works as long as the central body is much more massive than the orbiter. It is good for Sun and planet or Earth and Moon, and not so good for binary stars of comparable mass (more on that at the end).
+
+```python
+system = (
+    orb.create_system()
+    .add_body("Star", mass=1e30)                      # heavy; sits at the origin
+    .add_body("Planet", mass=1e24, x=1e11, vy=...)    # light; on the +x axis
+)
+```
+
+The `...` in the velocity is the whole question. Everything else follows from how much sideways motion we give the planet at that starting distance. See [`add_body()`](../reference/OrbitSystem.add_body.qmd) for the full list of arguments.
+
+## Why Velocity Must Be Perpendicular to Position
+
+Gravity always pulls the planet radially: straight toward the star along the line connecting them. If the planet's velocity has a component along that same line, the planet is already falling inward or climbing outward at its starting position. The start is then somewhere in the middle of the orbit, not at its closest or farthest point.
+
+For a circle, or for an ellipse whose long axis lies along a coordinate axis, you want the starting velocity to be **perpendicular** to the starting position vector. Put the planet on the +x axis (`x=1e11, y=0`) and give it a purely vertical velocity (`vx=0, vy=v`). The starting position is then either the closest point of the ellipse (periapsis) or the farthest point (apoapsis), depending on whether `v` is above or below the circular speed.
+
+This is not a physics requirement. Any velocity produces a valid orbit. It just makes the geometry much easier to reason about.
+
+## The Circular Orbit Velocity
+
+At distance $r$ from a central mass $M$, the speed that produces a perfect circle is
+
+$$v_{\text{circ}} = \sqrt{\frac{G \, M}{r}}$$
+
+In code:
+
+```{python}
+M = 1e30    # central mass (kg)
+r = 1e11    # starting distance (m)
+
+v_circ = np.sqrt(orb.gravitational_constant * M / r)
+v_circ
+```
+
+About 25.8 km/s. Put that into the planet's `vy` and you get a circle:
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Star", mass=M)
+    .add_body("Planet", mass=1e24, x=r, vy=v_circ)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim)
+plt.show()
+```
+
+One line of math and one call to `add_body()` give a stable circular orbit. The result is a pandas DataFrame with one row per body per time step, so it is easy to check how round the orbit really is. Here is the planet's distance from the star over the whole run, as a fraction of $r$:
+
+```{python}
+planet = sim[sim["id"] == "Planet"].reset_index(drop=True)
+star = sim[sim["id"] == "Star"].reset_index(drop=True)
+
+distance = np.hypot(planet["x"] - star["x"], planet["y"] - star["y"]) / r
+print(distance.min(), distance.max())
+```
+
+The distance stays within about two parts in a million of $r$ for the whole year.
+
+## What Happens If You Get the Speed Wrong?
+
+Real orbits are almost never perfect circles. The more interesting question is what the orbit looks like when `vy` is not exactly `v_circ`. Two small helpers make it easy to sweep through a few values: one builds the system for a given starting speed, the other simulates it for two years and keeps the planet's rows.
+
+```{python}
+def two_body(v):
+    return (
+        orb.create_system()
+        .add_body("Star", mass=M)
+        .add_body("Planet", mass=1e24, x=r, vy=v)
+    )
+
+
+def planet_path(v):
+    sim = two_body(v).simulate(
+        time_step=orb.seconds_per_hour, duration=2 * orb.seconds_per_year
+    )
+    return sim[sim["id"] == "Planet"]
+
+
+def plot_cases(cases, title):
+    fig, ax = plt.subplots()
+    for label, v in cases.items():
+        path = planet_path(v)
+        ax.plot(path["x"], path["y"], linewidth=1.5, label=label)
+    ax.plot(0, 0, "o", color="gold", markersize=10)
+    ax.set_aspect("equal")
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.set_title(title)
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
+    plt.show()
+```
+
+```{python}
+plot_cases(
+    {
+        "0.7 v_circ (too slow)": 0.7 * v_circ,
+        "1.0 v_circ (circle)": 1.0 * v_circ,
+        "1.2 v_circ (ellipse)": 1.2 * v_circ,
+        "1.4 v_circ (wider ellipse)": 1.4 * v_circ,
+    },
+    "Same starting point, different starting speeds",
+)
+```
+
+A few things to notice:
+
+- **At exactly `v_circ`** you get a circle.
+- **Below `v_circ`**, the orbit is an ellipse whose far side is still at the starting distance `r`, and whose near side dips closer to the star. The starting point is apoapsis (the farthest point).
+- **Above `v_circ`** (but below escape velocity), the orbit is an ellipse whose near side is the starting distance, and whose far side swings out much further. The starting point is periapsis (the closest point).
+- **At or above $\sqrt{2} \cdot v_{\text{circ}}$**, the orbit is no longer bound. The planet escapes on a parabolic or hyperbolic trajectory and never comes back. We will see this in the next section.
+
+The 1.4 curve looks open, but it is not. That orbit is simply too large to finish in the two years simulated here.
+
+[`get_orbital_elements()`](../reference/get_orbital_elements.qmd) puts numbers on all of this. It returns the orbit's elements at every time step. The first row is enough here, because a two-body orbit keeps its shape.
+
+```{python}
+rows = []
+for factor in [0.7, 1.0, 1.2, 1.4]:
+    start = two_body(factor * v_circ).simulate(duration=0)
+    el = orb.get_orbital_elements(start, "Planet", "Star").iloc[0]
+    rows.append({
+        "speed / v_circ": factor,
+        "a / r": el["a"] / r,
+        "e": el["e"],
+        "periapsis / r": el["a"] * (1 - el["e"]) / r,
+        "apoapsis / r": el["a"] * (1 + el["e"]) / r,
+        "period (days)": el["period"] / orb.seconds_per_day,
+    })
+
+pd.DataFrame(rows).round(3)
+```
+
+Here `a` is the semi-major axis (half the long diameter of the ellipse) and `e` is the eccentricity (0 for a circle, approaching 1 as the ellipse stretches). The [Keplerian elements](keplerian-elements.qmd) article explains both.
+
+The numbers follow a simple pattern. If the starting velocity is perpendicular to the position and has speed $k \, v_{\text{circ}}$, then
+
+$$a = \frac{r}{2 - k^2}, \qquad e = \left| k^2 - 1 \right|$$
+
+At 0.7 times the circular speed the planet falls to about a third of its starting distance before swinging back out. At 1.4 times, the far side of the orbit is 49 times the starting distance and one lap takes about 96 years.
+
+Slower starts dip closer still. The planet moves fastest at its closest approach, and a time step that was fine far from the star can be too coarse there. The [Unstable orbits](unstable-orbits.qmd) article covers what goes wrong and what to do about it.
+
+## Escape Velocity
+
+If you push `vy` hard enough, the planet's kinetic energy exceeds the gravitational binding energy and it leaves for good. The threshold is
+
+$$v_{\text{esc}} = \sqrt{\frac{2 \, G \, M}{r}} = \sqrt{2} \cdot v_{\text{circ}}$$
+
+```{python}
+v_esc = np.sqrt(2) * v_circ
+
+plot_cases(
+    {
+        "0.99 v_esc (very elongated ellipse)": 0.99 * v_esc,
+        "1.00 v_esc (parabolic escape)": 1.00 * v_esc,
+        "1.10 v_esc (hyperbolic escape)": 1.10 * v_esc,
+    },
+    "At escape velocity and above, the orbit opens up",
+)
+```
+
+Over two years the three paths look alike: each one heads away from the star. The difference is in what happens next, and the orbital elements show it.
+
+```{python}
+rows = []
+for factor in [0.99, 1.00, 1.10]:
+    start = two_body(factor * v_esc).simulate(duration=0)
+    el = orb.get_orbital_elements(start, "Planet", "Star").iloc[0]
+    rows.append({
+        "speed / v_esc": factor,
+        "e": round(el["e"], 4),
+        "period (years)": round(el["period"] / orb.seconds_per_year, 1),
+    })
+
+pd.DataFrame(rows)
+```
+
+Just below escape velocity the orbit is still a closed ellipse with $e < 1$. It is very stretched, with a period of about 97 years, but the planet does come back. At escape velocity $e = 1$, and above it $e > 1$. Those trajectories are open curves, so there is no period (`NaN`) and the planet never returns.
+
+## Which Direction Does the Orbit Go?
+
+The sign of `vy` sets the direction of travel. Starting on the +x axis:
+
+- `vy > 0`: the planet moves in the +y direction at first, giving a **counterclockwise** orbit (viewed from +z).
+- `vy < 0`: the planet moves in the $-$y direction at first, giving a **clockwise** orbit.
+
+Both trace the same circle, so a plot of the full orbit cannot tell them apart. Plotting only the first 60 days of each shows the difference.
+
+```{python}
+fig, ax = plt.subplots()
+for label, v in {
+    "vy = +v_circ (counterclockwise)": v_circ,
+    "vy = -v_circ (clockwise)": -v_circ,
+}.items():
+    path = planet_path(v)
+    first = path[path["time"] <= 60 * orb.seconds_per_day]
+    ax.plot(first["x"], first["y"], linewidth=1.5, label=label)
+ax.plot(r, 0, "o", color="black", markersize=6)
+ax.plot(0, 0, "o", color="gold", markersize=10)
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.set_title("The first 60 days, starting from the black dot")
+ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
+plt.show()
+```
+
+An animation shows the direction of travel directly. See [`animate_system()`](../reference/animate_system.qmd).
+
+## Rotating the Whole Setup
+
+There is nothing special about the +x axis. If you would rather place the planet on the +y axis, swap the roles: position goes in `y`, velocity goes in `vx`. A counterclockwise orbit now needs a negative `vx`.
+
+```{python}
+sim = (
+    orb.create_system()
+    .add_body("Star", mass=M)
+    .add_body("Planet", mass=1e24, y=r, vx=-v_circ)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sim)
+plt.show()
+```
+
+Same circle, with the starting point rotated 90 degrees. You can place the planet anywhere in the plane, as long as the velocity vector is perpendicular to the position vector and has magnitude `v_circ` (for a circle) or some deliberate deviation from it (for an ellipse).
+
+## When the Central Body Is Not Much Heavier
+
+Everything above assumed the star is so heavy that it does not move appreciably. That is a fine approximation when the mass ratio is $\gtrsim 10^4$ (Sun to Earth is about $3 \times 10^5$). It breaks down for binary stars, Pluto and Charon, or any system where the two masses are comparable.
+
+For those, both bodies orbit their common center of mass (the **barycenter**), and you need to give both bodies initial velocities that keep the total momentum at zero. The [binary star and Kepler-16 examples](examples.qmd#binary-stars) show how to do this. The short version:
+
+- Put the two bodies on opposite sides of the origin, at distances inversely proportional to their masses.
+- Give them velocities in opposite directions, with speeds again inversely proportional to mass.
+- For a circular orbit with total separation $d$, body 1 moves at $v_1 = m_2 \sqrt{G / \left( (m_1 + m_2) \, d \right)}$, and body 2 at the same expression with the masses swapped.
+
+For anything resembling a planet around a much heavier star, the single-body approach in this guide is all you need.
+
+## Recap
+
+To build a stable two-body orbit from scratch:
+
+1. Pick a central mass $M$ and place it at the origin with zero velocity.
+2. Pick a starting distance $r$ for the orbiter and place it on one axis (for example `x=r`, with `y` and `z` left at zero).
+3. Compute $v_{\text{circ}} = \sqrt{GM/r}$.
+4. Give the orbiter a velocity perpendicular to its position vector (for example `vy=v_circ`, with `vx` left at zero). Use exactly `v_circ` for a circle, less for an inward ellipse, more for an outward ellipse, and `np.sqrt(2) * v_circ` or above for an escape trajectory.
+
+That is the entire recipe. Every custom system you build with `add_body()` comes down to applying these four steps to one pair of bodies at a time. When you would rather describe an orbit by its shape and orientation than by a velocity, use [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd), covered in [Keplerian elements](keplerian-elements.qmd).

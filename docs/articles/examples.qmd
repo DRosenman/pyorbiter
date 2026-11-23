@@ -1,0 +1,324 @@
+---
+title: "Examples"
+description: "A gallery of complete pyorbiter simulations, from the solar system and the Earth-Moon pair to binary stars, a circumbinary planet, and a comet."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+Each example on this page is a complete simulation: build a system, run it, plot the result. Copy any of them as a starting point. They all assume these imports:
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+```
+
+## The Full Solar System
+
+The fastest way to get a complete solar system simulation is [`load_solar_system()`](../reference/load_solar_system.qmd):
+
+```{python}
+solar = orb.load_solar_system().simulate(
+    time_step=orb.seconds_per_day, duration=orb.seconds_per_year
+)
+
+orb.plot_orbits(solar, three_d=False)
+plt.show()
+```
+
+The system holds the Sun, the eight planets, the Moon and Pluto. Every body starts at its periapsis (its closest point to its parent), with its real eccentricity, inclination and orbital orientation. In one year Mercury, Venus and Earth complete their orbits and Mars gets about halfway around, while the outer planets barely move: Mercury goes around more than four times, Jupiter covers under a tenth of a lap, and Neptune less than a hundredth.
+
+The planets' orbits are slightly tilted relative to each other, so the simulation has motion in `z`. By default [`plot_orbits()`](../reference/plot_orbits.qmd) would then draw an interactive 3D figure. `three_d=False` asks for the flat, top-down matplotlib view. See [3D plotting](plotting-3d.qmd) for the interactive version.
+
+The result of every simulation is a DataFrame with one row per body per time step:
+
+```{python}
+solar.head()
+```
+
+## The Inner Solar System
+
+Use [`add_planet()`](../reference/OrbitSystem.add_planet.qmd) to pick specific bodies without looking up any numbers:
+
+```{python}
+inner = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Mercury", parent="Sun")
+    .add_planet("Venus", parent="Sun")
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=2 * orb.seconds_per_year)
+)
+
+orb.plot_orbits(inner, three_d=False)
+plt.show()
+```
+
+Mercury's orbit is visibly off-center compared to the near-circular orbits of Venus and Earth. Mars is off-center too. Its eccentricity is smaller than Mercury's (0.093 against 0.206), but its orbit is so much larger that its center sits even farther from the Sun.
+
+## The Earth-Moon System
+
+`add_planet()` also knows the Moon. Here Earth sits at the origin and the Moon is placed on its real orbit around it:
+
+```{python}
+earth_moon = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_planet("Moon", parent="Earth")
+    .simulate(time_step=orb.seconds_per_hour, duration=28 * orb.seconds_per_day)
+)
+
+earth_moon = orb.shift_reference_frame(earth_moon, "barycenter")
+
+orb.plot_orbits(earth_moon, three_d=False)
+plt.show()
+```
+
+The Moon completes one orbit in about 27 days. Earth is not fixed: the two bodies orbit their common center of mass, and Earth traces a small loop of its own, between 4,400 and 4,800 km from that center. That is why the simulation is shifted to the `"barycenter"` frame with [`shift_reference_frame()`](../reference/shift_reference_frame.qmd) before plotting. Earth started at rest and the Moon started moving, so in the original frame the pair as a whole drifts slowly across the plot.
+
+And animated, so you can watch the Moon swing around. [`animate_system()`](../reference/animate_system.qmd) writes a GIF when you give it a `path`:
+
+```{python}
+#| output: false
+orb.animate_system(
+    earth_moon, fps=8, duration=3, trails=True, three_d=False, path="earth-moon.gif"
+)
+```
+
+![](earth-moon.gif)
+
+## The Sun-Earth System
+
+A full year with daily time steps, this time built by hand with [`add_body()`](../reference/OrbitSystem.add_body.qmd) and the built-in [physical constants](physical-constants.qmd):
+
+```{python}
+sun_earth = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sun_earth)
+plt.show()
+```
+
+Earth starts on the +x axis moving in the +y direction at its mean orbital speed. That speed is within 0.03 percent of the circular speed at that distance, so the orbit comes out almost perfectly round. [Building Two-Body Orbits](building-two-body-orbits.qmd) explains how to choose these numbers yourself.
+
+## The Three-Body Problem (Sun-Earth-Moon)
+
+pyorbiter computes the gravity between every pair of bodies, so nested hierarchies need no special setup. Add the Moon's distance and speed on top of Earth's:
+
+```{python}
+sun_earth_moon = (
+    orb.create_system()
+    .add_sun()
+    .add_body("Earth", mass=orb.mass_earth, x=orb.distance_earth_sun, vy=orb.speed_earth)
+    .add_body(
+        "Moon", mass=orb.mass_moon,
+        x=orb.distance_earth_sun + orb.distance_earth_moon,
+        vy=orb.speed_earth + orb.speed_moon,
+    )
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(sun_earth_moon)
+plt.show()
+```
+
+At this scale the Earth and Moon orbits lie on top of each other. The Earth-Moon distance (about 384,000 km) is tiny compared to the Earth-Sun distance (about 150 million km): a factor of 389. The next example zooms in.
+
+## Shifting Your Point of View
+
+The three-body plot above is heliocentric (Sun at the center). To see the same simulation from Earth's perspective, pass it through [`shift_reference_frame()`](../reference/shift_reference_frame.qmd):
+
+```{python}
+from_earth = orb.shift_reference_frame(sun_earth_moon, "Earth")
+
+orb.plot_orbits(from_earth)
+plt.show()
+```
+
+Now Earth sits at the origin and the Sun appears to circle it once a year. The Moon is still too close to Earth to see. Drop the Sun's rows and the plot zooms in on it:
+
+```{python}
+moon_view = from_earth[from_earth["id"] != "Sun"]
+
+orb.plot_orbits(moon_view)
+plt.show()
+```
+
+The Moon circles Earth 13.6 times in the year. The ring has some width because the Sun's pull keeps reshaping the orbit: the Earth-Moon distance varies between about 370,000 and 388,000 km over the run.
+
+Animating the first two months of the Earth-frame view shows the Moon's monthly loop:
+
+```{python}
+#| output: false
+two_months = moon_view[moon_view["time"] <= 56 * orb.seconds_per_day]
+
+orb.animate_system(two_months, fps=8, duration=3, trails=True, path="moon-from-earth.gif")
+```
+
+![](moon-from-earth.gif)
+
+[Reference frames](reference-frames.qmd) covers this function in more detail.
+
+## Binary Stars {#binary-stars}
+
+When two bodies have comparable masses, neither one can sit still at the center. Both orbit their common center of mass. To set that up, put the stars on opposite sides of the origin and give them opposite velocities, with distances and speeds inversely proportional to their masses. The total momentum is then zero and the pair stays put.
+
+For two equal stars a distance $d$ apart, each of mass $m$, the speed that gives a circular orbit is $v = \sqrt{G m / (2 d)}$. Starting slower than that gives an eccentric pair:
+
+```{python}
+m_star = orb.mass_sun
+d = orb.distance_earth_sun
+
+v_circular = np.sqrt(orb.gravitational_constant * m_star / (2 * d))
+v_start = 0.7 * v_circular
+
+binary = (
+    orb.create_system()
+    .add_body("Star A", mass=m_star, x=d / 2, vy=v_start)
+    .add_body("Star B", mass=m_star, x=-d / 2, vy=-v_start)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(binary)
+plt.show()
+```
+
+Each star traces its own ellipse, and the two ellipses share a focus at the center of mass. The stars start at their widest separation and fall toward each other.
+
+[`get_orbital_elements()`](../reference/get_orbital_elements.qmd) describes the orbit of one star relative to the other. With comparable masses, pass `mu` as $G(m_A + m_B)$ so that both masses are counted:
+
+```{python}
+elements = orb.get_orbital_elements(
+    binary, "Star A", "Star B",
+    mu=orb.gravitational_constant * (2 * m_star),
+)
+
+first = elements.iloc[0]
+print("eccentricity:", round(first["e"], 3))
+print("semi-major axis / d:", round(first["a"] / d, 3))
+print("period (days):", round(first["period"] / orb.seconds_per_day, 1))
+```
+
+## The Kepler-16 System: A Real Circumbinary Planet {#kepler-16}
+
+Kepler-16b was the first planet found by watching it transit both stars of a binary. The system has a K-type star (0.68 solar masses) and an M-type star (0.20 solar masses) orbiting each other every 41 days or so, with a Saturn-sized planet orbiting the pair at about 0.7 AU.
+
+The setup uses the same recipe as the binary above, now with unequal masses, plus a planet on a circular orbit around the stars' combined mass. The stars are given circular orbits here to keep the setup simple.
+
+```{python}
+G = orb.gravitational_constant
+AU = orb.distance_earth_sun
+
+# Masses
+m_a = 0.68 * orb.mass_sun
+m_b = 0.20 * orb.mass_sun
+m_planet = 0.333 * orb.mass_jupiter
+
+# Binary star orbit (0.22 AU separation)
+a_bin = 0.22 * AU
+r_a = a_bin * m_b / (m_a + m_b)
+r_b = a_bin * m_a / (m_a + m_b)
+v_a = np.sqrt(G * m_b**2 / ((m_a + m_b) * a_bin))
+v_b = np.sqrt(G * m_a**2 / ((m_a + m_b) * a_bin))
+
+# Planet orbit (0.7048 AU from the barycenter)
+r_planet = 0.7048 * AU
+v_planet = np.sqrt(G * (m_a + m_b) / r_planet)
+
+kepler16 = (
+    orb.create_system()
+    .add_body("Star A", mass=m_a, x=r_a, vy=v_a)
+    .add_body("Star B", mass=m_b, x=-r_b, vy=-v_b)
+    .add_body("Kepler-16b", mass=m_planet, x=r_planet, vy=v_planet)
+    .simulate(time_step=orb.seconds_per_hour, duration=3 * 228.8 * orb.seconds_per_day)
+)
+
+orb.plot_orbits(kepler16)
+plt.show()
+```
+
+The heavier star makes the small circle near the center and the lighter star the larger one. With these masses and this separation, the simulated stars orbit each other every 40.2 days, and the planet goes around three times in the 686 days simulated. The planet's orbit is not a perfect circle. Its distance from the system's center of mass wobbles between 0.691 and 0.705 AU as the two stars move inside it.
+
+An animation of the planet's first orbit shows the structure well: the two stars whirl tightly around their common center while the planet traces a much wider, slower loop around the pair.
+
+```{python}
+#| output: false
+first_orbit = kepler16[kepler16["time"] <= 228.8 * orb.seconds_per_day]
+
+orb.animate_system(first_orbit, fps=8, duration=4, trails=True, path="kepler16.gif")
+```
+
+![](kepler16.gif)
+
+## A Comet Crossing the Inner Solar System
+
+[`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd) is the right tool for objects with extreme orbits. Here is a Halley-like comet on a highly eccentric, steeply inclined orbit that plunges through the inner solar system:
+
+```{python}
+comet = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_body_keplerian(
+        "Comet", mass=2.2e14, parent="Sun",
+        a=2.5 * orb.distance_earth_sun, e=0.85,
+        i=50, lan=60, arg_pe=120, nu=150,
+    )
+    .simulate(time_step=6 * orb.seconds_per_hour, duration=4 * orb.seconds_per_year)
+)
+
+orb.plot_orbits(comet)
+```
+
+The comet's orbit is tilted 50° out of the plane of Earth's orbit, so `plot_orbits()` returns an interactive plotly figure. Drag to rotate it.
+
+With an eccentricity of 0.85, the comet's farthest distance from the Sun (4.6 AU) is over 12 times its closest approach (0.375 AU). One orbit takes just under four years. Starting at $\nu = 150°$ places the comet on its way out, 30° of true anomaly short of apoapsis. That is not close in time: a body on an eccentric orbit moves slowly when it is far out. It reaches its farthest point about a year and a half into the run, then falls back toward the Sun and whips around it about three and a half years in.
+
+The same simulation in the flat top-down view:
+
+```{python}
+orb.plot_orbits(comet, three_d=False)
+plt.show()
+```
+
+The [Keplerian elements](keplerian-elements.qmd) article explains what each of the six elements does.
+
+## What-If: Circular Mars
+
+`add_planet()` lets you override individual elements while keeping everything else real. What if Mars had a perfectly circular orbit?
+
+```{python}
+def mars_path(**overrides):
+    sim = (
+        orb.create_system()
+        .add_sun()
+        .add_planet("Mars", parent="Sun", **overrides)
+        .simulate(time_step=orb.seconds_per_day, duration=687 * orb.seconds_per_day)
+    )
+    return sim[sim["id"] == "Mars"]
+
+
+fig, ax = plt.subplots()
+for label, path in {
+    "Real Mars (e = 0.093)": mars_path(),
+    "Circular Mars (e = 0)": mars_path(e=0),
+}.items():
+    ax.plot(path["x"], path["y"], linewidth=1.5, label=label)
+ax.plot(0, 0, "o", color="gold", markersize=10)
+ax.set_aspect("equal")
+ax.set_xlabel("X (m)")
+ax.set_ylabel("Y (m)")
+ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.02, 1))
+plt.show()
+```
+
+The two orbits are the same size and take the same 687 days, but the real one is shifted to one side of the Sun. Real Mars ranges from 207 to 249 million kilometers from the Sun. The circular version stays at 228 million.

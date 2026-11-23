@@ -1,0 +1,381 @@
+---
+title: "pandas or polars"
+description: "Choose whether pyorbiter returns pandas or polars DataFrames, and what changes between the two."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+A simulation in `pyorbiter` is a table: one row per body per time step. By default that table is a pandas DataFrame. If you prefer polars, `pyorbiter` can return polars DataFrames instead, and every function that takes a simulation accepts either kind.
+
+This article covers how to choose, what stays the same, and the one place where the two differ: how the settings of a run travel with its result.
+
+## Installation
+
+pandas is installed with `pyorbiter`. polars is optional and comes with the `polars` extra:
+
+```bash
+pip install "pyorbiter[polars] @ git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+If you already have polars installed, there is nothing more to do.
+
+## Choosing a backend
+
+There are two ways to ask for polars: once per call, or once for the whole session.
+
+### For a single call
+
+[`simulate()`](../reference/simulate_system.qmd) takes a `backend` argument. Here is the same system simulated twice, once into each kind of DataFrame:
+
+```{python}
+import numpy as np
+import polars as pl
+import pyorbiter as orb
+
+system = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+)
+
+sim_pd = system.simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+sim_pl = system.simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year,
+                         backend="polars")
+
+type(sim_pd), type(sim_pl)
+```
+
+The polars result has the same nine columns in the same order, with `id` as a string column and everything else as 64-bit floats:
+
+```{python}
+sim_pl.head()
+```
+
+The numbers are identical. Both results come from the same calculation, and only the container differs:
+
+```{python}
+all(np.array_equal(sim_pl[name].to_numpy(), sim_pd[name].to_numpy())
+    for name in sim_pd.columns)
+```
+
+The function form [`simulate_system()`](../reference/simulate_system.qmd) takes the same argument, and so does [`get_bodies()`](../reference/OrbitSystem.get_bodies.qmd), which returns the table of bodies in a system:
+
+```{python}
+system.get_bodies(backend="polars")
+```
+
+### For the whole session
+
+[`set_backend()`](../reference/set_backend.qmd) changes the default, so that every later call returns polars without being asked. [`get_backend()`](../reference/get_backend.qmd) reports the current default.
+
+```{python}
+orb.get_backend()
+```
+
+```{python}
+orb.set_backend("polars")
+
+sim = system.simulate(time_step=orb.seconds_per_day, duration=30 * orb.seconds_per_day)
+type(sim), type(system.bodies), orb.get_backend()
+```
+
+The `backend` argument still wins for a single call, so you can get a pandas result while the default is polars:
+
+```{python}
+one_off = system.simulate(time_step=orb.seconds_per_day, duration=30 * orb.seconds_per_day,
+                          backend="pandas")
+type(one_off)
+```
+
+The setting lasts for the rest of the Python session. Switch back the same way:
+
+```{python}
+orb.set_backend("pandas")
+orb.get_backend()
+```
+
+The rest of this article leaves the default at pandas and uses `backend="polars"` where a polars result is wanted.
+
+Only `"pandas"` and `"polars"` are accepted. Anything else raises a `ValueError`, and asking for polars when it is not installed raises an `ImportError` that names the extra to install. In both cases the default is left as it was.
+
+## Functions return the kind they are given
+
+The backend setting only matters for the functions that create a DataFrame from a system: `simulate()`, `simulate_system()`, `get_bodies()`, and the `bodies` property. Every function that is given a simulation ignores the setting and hands back the same kind it received. That covers the analysis functions and [`continue_simulation()`](../reference/continue_simulation.qmd).
+
+```{python}
+type(orb.get_energy(sim_pd)), type(orb.get_energy(sim_pl))
+```
+
+```{python}
+orb.get_energy(sim_pl).head(3)
+```
+
+So the two kinds can be mixed freely in one session. A pandas simulation stays pandas through [`shift_reference_frame()`](../reference/shift_reference_frame.qmd), [`get_orbital_elements()`](../reference/get_orbital_elements.qmd), and [`conserved_quantities()`](../reference/conserved_quantities.qmd), and a polars one stays polars.
+
+```{python}
+longer = orb.continue_simulation(sim_pl, time_step=orb.seconds_per_day,
+                                 duration=30 * orb.seconds_per_day)
+type(longer), sim_pl.height, longer.height
+```
+
+Thirty more days for three bodies adds 90 rows, and the result is still polars.
+
+The plotting functions accept either kind too. They draw the same picture from both:
+
+```{python}
+orb.plot_orbits(sim_pl, three_d=False);
+```
+
+### LazyFrames
+
+A polars `LazyFrame` is accepted wherever a polars DataFrame is. `pyorbiter` collects it, does the work, and returns an ordinary polars `DataFrame`, not another `LazyFrame`:
+
+```{python}
+lazy = sim_pl.lazy()
+momentum = orb.get_momentum(lazy)
+type(lazy).__name__, type(momentum).__name__
+```
+
+This lets a lazy query end in a `pyorbiter` call without an explicit `.collect()`. Here the query keeps the first 100 days before the reference frame is shifted:
+
+```{python}
+first_100 = sim_pl.lazy().filter(pl.col("time") <= 100 * orb.seconds_per_day)
+orb.shift_reference_frame(first_100, "Earth", keep_center=False).tail(2)
+```
+
+## Your own columns are carried through
+
+A simulation often picks up extra columns as you work: a time in days, a label, a flag. `pyorbiter` only computes with its own nine columns (`id`, `mass`, `x`, `y`, `z`, `vx`, `vy`, `vz`, `time`). Functions that return the rows of a simulation, such as `shift_reference_frame()`, leave any other column exactly as it was.
+
+```{python}
+labelled = sim_pl.with_columns(
+    day=pl.col("time") / orb.seconds_per_day,
+    kind=pl.when(pl.col("id") == "Sun").then(pl.lit("star")).otherwise(pl.lit("planet")),
+)
+
+orb.shift_reference_frame(labelled, "Sun").head(3)
+```
+
+The `day` and `kind` columns come back untouched, with their polars types, in their original positions. The same is true for a pandas simulation.
+
+Two details are worth knowing:
+
+- `continue_simulation()` adds new rows, and it has no way to know what your columns should hold for them. They are filled with nulls in polars, and with `NaN` in pandas.
+- Functions that build a new table, such as `get_energy()` or `get_orbital_elements()`, return only their own columns. Your extra columns do not get in their way, but they are not part of the result.
+
+```{python}
+more = orb.continue_simulation(labelled, time_step=orb.seconds_per_day,
+                               duration=orb.seconds_per_day)
+more.select("id", "time", "day", "kind").tail(4)
+```
+
+## Run settings
+
+`simulate()` records four settings alongside its result: the gravitational constant `G`, the softening length, the integrator, and the time step. The analysis functions read them back, so that `get_energy()`, for example, uses the same `G` and softening as the run did, and `continue_simulation()` carries on with the same integrator.
+
+[`run_settings()`](../reference/run_settings.qmd) returns them as a dict. It works the same way for both kinds of DataFrame:
+
+```{python}
+orb.run_settings(sim_pd)
+```
+
+```{python}
+orb.run_settings(sim_pl) == orb.run_settings(sim_pd)
+```
+
+Where the settings are kept is the real difference between the two backends.
+
+### pandas: settings live in `attrs`
+
+A pandas DataFrame has an `attrs` dict for exactly this kind of metadata, and `run_settings()` returns a copy of it. pandas carries `attrs` along through most operations, so a simulation you have filtered or added columns to still knows its settings:
+
+```{python}
+earth_pd = sim_pd[sim_pd["id"] == "Earth"]
+earth_pd.attrs
+```
+
+### polars: settings stay with the original DataFrame
+
+A polars DataFrame has no `attrs`. `pyorbiter` instead remembers the settings for the exact DataFrame it returned. A DataFrame you derive from it is a new object, and nothing is remembered for it:
+
+```{python}
+earth_pl = sim_pl.filter(pl.col("id") == "Earth")
+
+{
+    "returned by pyorbiter": orb.run_settings(sim_pl),
+    "after filter": orb.run_settings(earth_pl),
+    "after sort": orb.run_settings(sim_pl.sort("time")),
+    "after with_columns": orb.run_settings(sim_pl.with_columns(day=pl.col("time") / 86400)),
+}
+```
+
+`filter`, `sort`, `with_columns`, `select`, `clone`, a join, and a file you read back all give a new DataFrame with an empty dict. DataFrames returned by `shift_reference_frame()` and `continue_simulation()` are the exception. `pyorbiter` made them, so it records the settings for them:
+
+```{python}
+orb.run_settings(orb.shift_reference_frame(sim_pl, "Earth"))
+```
+
+### When this matters
+
+When a function finds no recorded settings, it falls back to the defaults: the standard `G`, no softening, and the `"verlet"` integrator. If the run used the defaults, the fallback gives the same values and nothing goes wrong. Most runs are like this, including every simulation above.
+
+It matters when the run used something else. Here is an Earth-Moon run with a softening length of 50,000 km and the Euler-Cromer integrator:
+
+```{python}
+earth_moon = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+)
+
+run = earth_moon.simulate(time_step=orb.seconds_per_hour, duration=10 * orb.seconds_per_day,
+                          softening=5e7, method="euler_cromer", backend="polars")
+orb.run_settings(run)
+```
+
+Suppose you only want the second half of it:
+
+```{python}
+recent = run.filter(pl.col("time") >= 5 * orb.seconds_per_day)
+orb.run_settings(recent)
+```
+
+`recent` holds correct positions and velocities, but it has lost the settings. Asking for its energy now uses a softening of zero, which is not what the run used. Compare the potential energy at the last time step, computed three ways:
+
+```{python}
+def last_potential(energy):
+    return energy["potential"][-1]
+
+{
+    "original": last_potential(orb.get_energy(run)),
+    "derived": last_potential(orb.get_energy(recent)),
+    "derived, softening given": last_potential(orb.get_energy(recent, softening=5e7)),
+}
+```
+
+The derived DataFrame gives $-7.396 \times 10^{28}$ J where the run's own softened potential is $-7.337 \times 10^{28}$ J, a difference of about 0.8 percent. Nothing warns you, because a softening of zero is a perfectly valid setting. Passing `softening=5e7` yourself restores the right answer.
+
+`continue_simulation()` is affected in the same way, and there the integrator matters as well. Continue for 10 more days from each DataFrame and compare where the Moon ends up:
+
+```{python}
+step = dict(time_step=orb.seconds_per_hour, duration=10 * orb.seconds_per_day)
+
+from_original = orb.continue_simulation(run, **step)
+from_derived = orb.continue_simulation(recent, **step)
+from_derived_fixed = orb.continue_simulation(recent, **step, softening=5e7,
+                                             method="euler_cromer")
+
+def moon_at_end(sim):
+    return sim.filter(pl.col("id") == "Moon").select("x", "y").tail(1).row(0)
+
+{
+    "original": moon_at_end(from_original),
+    "derived": moon_at_end(from_derived),
+    "derived, settings given": moon_at_end(from_derived_fixed),
+}
+```
+
+Continued with the default settings, the Moon ends up about 23,600 km from where the original run puts it. With `softening` and `method` passed explicitly, the continuation matches the original exactly. The settings recorded for each result show what was used:
+
+```{python}
+{
+    "derived": orb.run_settings(from_derived),
+    "derived, settings given": orb.run_settings(from_derived_fixed),
+}
+```
+
+The rule for polars is short. If a run did not use the default `G`, softening, and integrator, and you have derived a new DataFrame from its result, then:
+
+- pass `G` and `softening` to `get_energy()` and `conserved_quantities()`,
+- pass `G` to `get_orbital_elements()`,
+- pass `G`, `softening`, and `method` to `continue_simulation()`.
+
+A custom `G` comes from `orb.create_system(G=...)`. Softening and the integrator come from `simulate()`. Another way to stay safe is to call the `pyorbiter` function on the original DataFrame first and do your own filtering on what it returns.
+
+With pandas the same filter keeps the settings, so none of this is needed:
+
+```{python}
+run_pd = earth_moon.simulate(time_step=orb.seconds_per_hour, duration=10 * orb.seconds_per_day,
+                             softening=5e7, method="euler_cromer")
+run_pd[run_pd["time"] >= 5 * orb.seconds_per_day].attrs
+```
+
+## The same analysis, both ways
+
+To finish, here is one small analysis written twice. The question: over one year, how close does each planet come to the Sun, how far away does it get, and what is its mean speed?
+
+The steps are the same in both libraries. Shift the frame to the Sun, compute a distance and a speed for every row, then summarize per body.
+
+### In pandas
+
+```{python}
+rel = orb.shift_reference_frame(sim_pd, "Sun", keep_center=False)
+rel["r"] = np.sqrt(rel["x"]**2 + rel["y"]**2 + rel["z"]**2)
+rel["speed"] = np.sqrt(rel["vx"]**2 + rel["vy"]**2 + rel["vz"]**2)
+
+rel.groupby("id", sort=False).agg(
+    closest=("r", "min"),
+    farthest=("r", "max"),
+    mean_speed=("speed", "mean"),
+)
+```
+
+### In polars
+
+```{python}
+(
+    orb.shift_reference_frame(sim_pl, "Sun", keep_center=False)
+    .with_columns(
+        r=(pl.col("x")**2 + pl.col("y")**2 + pl.col("z")**2).sqrt(),
+        speed=(pl.col("vx")**2 + pl.col("vy")**2 + pl.col("vz")**2).sqrt(),
+    )
+    .group_by("id", maintain_order=True)
+    .agg(
+        closest=pl.col("r").min(),
+        farthest=pl.col("r").max(),
+        mean_speed=pl.col("speed").mean(),
+    )
+)
+```
+
+The two tables agree. Earth ranges from $1.471 \times 10^{11}$ m to $1.521 \times 10^{11}$ m from the Sun, its perihelion and aphelion distances, and averages about 29.8 km/s. Mars ranges from $2.066 \times 10^{11}$ m to $2.492 \times 10^{11}$ m and averages about 24.0 km/s over this year, which is a little more than half of its 687-day orbit.
+
+Two small differences in idiom are visible. pandas puts the body names in the index of the summary, while polars keeps `id` as an ordinary column. And `sort=False` in pandas plays the role of `maintain_order=True` in polars: both keep the bodies in the order they were added.
+
+Plotting a column over time looks much the same in either library, because matplotlib accepts both kinds of column. Here is the Earth-Sun distance through the year from the polars result:
+
+```{python}
+import matplotlib.pyplot as plt
+
+earth = (
+    orb.shift_reference_frame(sim_pl, "Sun")
+    .filter(pl.col("id") == "Earth")
+    .with_columns(
+        day=pl.col("time") / orb.seconds_per_day,
+        r=(pl.col("x")**2 + pl.col("y")**2 + pl.col("z")**2).sqrt(),
+    )
+)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.plot(earth["day"], earth["r"])
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Distance (m)")
+ax.set_title("Earth-Sun Distance Over One Year");
+```
+
+Earth starts at perihelion, because `add_planet()` places a body at periapsis by default, reaches aphelion half a year later, and returns.
+
+## Which one to use
+
+Use whichever library you already know. `pyorbiter` gives the same numbers either way.
+
+The simulation itself is not affected by the choice. The engine computes with numpy and pandas internally and converts at the boundary of the package, so asking for polars does not change how the integration runs. What changes is the library you use afterwards for your own filtering, grouping, and joining.
+
+pandas is the default and needs nothing extra. Its `attrs` keep the run settings attached through your own operations. polars is a good choice if the rest of your work is already in polars. Keep the note about run settings in mind for runs with a custom `G`, softening, or integrator.
+
+For more on working with the result directly, see [Custom visualization](custom-visualization.qmd).

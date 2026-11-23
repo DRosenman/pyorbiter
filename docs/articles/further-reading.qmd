@@ -1,0 +1,50 @@
+---
+title: "Further Reading"
+description: "Books and other resources on the physics, the numerics, and the tools behind pyorbiter."
+---
+
+`pyorbiter` uses the same physics and the same numerical methods as its R sibling, [orbitr](https://orbit-r.com). These are the books and resources I found most useful while building the two packages. If you want to go deeper on the physics, the numerics, or the engineering, these are where I would start.
+
+## Books
+
+### Classical Dynamics of Particles and Systems, by Stephen T. Thornton and Jerry B. Marion (5th ed., 2004, Brooks/Cole)
+
+This was my primary reference for the gravitational physics at the heart of the simulation engine. Thornton and Marion's treatment of central-force problems and of two-body and multi-body gravitational interactions gave me the framework for implementing the N-body force law and for understanding how acceleration vectors add up when several bodies pull on each other at once.
+
+### Computational Physics, by Mark Newman (2012, CreateSpace)
+
+Newman's coverage of numerical integration is where I learned to think carefully about the tradeoffs between integration methods. His discussion of energy conservation in numerical schemes directly shaped the three options for `method` in [`simulate_system()`](../reference/simulate_system.qmd): basic Euler, symplectic Euler-Cromer, and the velocity Verlet algorithm that `pyorbiter` uses by default for stable long-duration orbits. The book's examples are written in Python, which makes it a natural companion to this package.
+
+### Data Structures & Algorithms in Python, by John Canning, Alan Broder, and Robert Lafore (2022, Addison-Wesley)
+
+The algorithmic thinking in this book influenced how I structured the simulation loop and the vectorized acceleration calculation. Its emphasis on pre-allocation, efficient iteration patterns, and choosing the right data layout for the problem carried over directly into the design of the simulation engine.
+
+## Online
+
+### Orbital Mechanics with R
+
+[Orbital Mechanics with R](https://book.orbit-r.com) is a free online book that teaches orbital mechanics through simulation with orbitr. The code is R, but the physics is the same, and pyorbiter keeps orbitr's function names, so the examples translate almost line for line. [Coming from R](coming-from-r.qmd) maps one package to the other.
+
+### The orbitr site
+
+The [orbitr documentation](https://orbit-r.com) covers the R package. It is the place to go if you also work in R, or if you want to see the same simulations written with the pipe and ggplot2.
+
+### The libraries pyorbiter is built on
+
+- [NumPy](https://numpy.org/doc/stable/): the arrays behind the acceleration kernel and the integrators.
+- [pandas](https://pandas.pydata.org/docs/) and [polars](https://docs.pola.rs/): the DataFrames a simulation is returned in. See [pandas or polars](pandas-or-polars.qmd).
+- [matplotlib](https://matplotlib.org/stable/): the 2D plots and animations.
+- [plotly](https://plotly.com/python/): the interactive 3D plots and animations. See [3D Plotting](plotting-3d.qmd).
+- [Quarto](https://quarto.org) and [quartodoc](https://machow.github.io/quartodoc/): this documentation site.
+
+## Elsewhere on this site
+
+- [The Physics](the-physics.qmd): the equations and the integrators as pyorbiter implements them.
+- [Conservation](conservation.qmd): how to check a simulation against the conservation laws.
+- [Function reference](../reference/index.qmd): every function and method.
+
+## Acknowledgments
+
+Shoutout to The College of New Jersey, where I first got hooked on this stuff. Go Lions.
+
+This package was built with the help of [Claude Code](https://claude.ai/claude-code), which handled a lot of the boilerplate, scaffolding, and iteration that would otherwise have slowed things down. The physics, the design decisions, and the mistakes are all mine, but Claude made it possible to move from idea to working package much faster than I could have on my own.

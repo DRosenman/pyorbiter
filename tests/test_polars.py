@@ -319,10 +319,10 @@ def test_missing_polars_is_reported_and_changes_nothing(system, monkeypatch):
 
     for name in [name for name in sys.modules if name == "polars" or name.startswith("polars.")]:
         monkeypatch.setitem(sys.modules, name, None)
-    with pytest.raises(ImportError, match=r"pyorbiter\[polars\]"):
+    with pytest.raises(ImportError, match="pip install polars"):
         orb.set_backend("polars")
     assert orb.get_backend() == "pandas"
-    with pytest.raises(ImportError, match=r"pyorbiter\[polars\]"):
+    with pytest.raises(ImportError, match="pip install polars"):
         system.simulate(time_step=DAY, duration=DAY, backend="polars")
     assert isinstance(system.simulate(time_step=DAY, duration=DAY), pd.DataFrame)
     assert isinstance(system.bodies, pd.DataFrame)

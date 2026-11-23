@@ -1,0 +1,128 @@
+project:
+  type: website
+  output-dir: _site
+
+# Chapters and reference pages run their code when the site is built.
+execute:
+  freeze: false
+  warning: false
+
+website:
+  title: "pyorbiter"
+  description: "A tidy N-body physics engine for building and visualizing orbital simulations in Python."
+  repo-url: https://github.com/DRosenman/pyorbiter
+  repo-actions: [issue]
+  page-navigation: true
+  search: true
+  navbar:
+    left:
+      - text: "Get Started"
+        href: articles/quick-start.qmd
+      - text: "Reference"
+        href: reference/index.qmd
+      - text: "Getting Started"
+        menu:
+          - articles/building-two-body-orbits.qmd
+          - articles/keplerian-elements.qmd
+          - articles/examples.qmd
+          - articles/physical-constants.qmd
+          - articles/pandas-or-polars.qmd
+      - text: "Visualization"
+        menu:
+          - articles/plotting-3d.qmd
+          - articles/custom-visualization.qmd
+      - text: "Understanding the Simulation"
+        menu:
+          - articles/the-physics.qmd
+          - articles/conservation.qmd
+          - articles/reference-frames.qmd
+          - articles/unstable-orbits.qmd
+      - text: "Resources"
+        menu:
+          - articles/coming-from-r.qmd
+          - articles/further-reading.qmd
+    right:
+      - icon: github
+        href: https://github.com/DRosenman/pyorbiter
+        aria-label: GitHub repository
+  page-footer:
+    left: "pyorbiter is MIT licensed."
+    right: "Built with [Quarto](https://quarto.org) and [quartodoc](https://machow.github.io/quartodoc/)."
+
+metadata-files:
+  - reference/_sidebar.yml
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-overflow: wrap
+    fig-width: 7
+    fig-height: 5
+    fig-dpi: 110
+
+jupyter: python3
+
+quartodoc:
+  package: pyorbiter
+  dir: reference
+  title: "Function reference"
+  style: pkgdown
+  parser: numpy
+  sidebar: reference/_sidebar.yml
+  render_interlinks: false
+  options:
+    signature_name: short
+  sections:
+    - title: "System setup"
+      desc: "Create a system and add bodies to it. Every `OrbitSystem` method below is also available as a function that takes the system first, for example `orb.add_planet(system, \"Earth\", parent=\"Sun\")`."
+      contents:
+        - create_system
+        - load_solar_system
+        - OrbitSystem.add_sun
+        - OrbitSystem.add_body
+        - OrbitSystem.add_body_keplerian
+        - OrbitSystem.add_planet
+        - OrbitSystem.remove_body
+        - OrbitSystem.get_bodies
+        - name: OrbitSystem
+          members: [bodies, simulate, save, export_bodies]
+    - title: "Simulation"
+      desc: "Run the N-body simulation."
+      contents:
+        - simulate_system
+        - continue_simulation
+        - system_from_simulation
+        - calc_acceleration
+    - title: "Analysis"
+      desc: "Reference frames, orbital elements, and conserved quantities."
+      contents:
+        - shift_reference_frame
+        - get_orbital_elements
+        - get_energy
+        - get_momentum
+        - get_angular_momentum
+        - conserved_quantities
+    - title: "Visualization"
+      desc: "Plot and animate a simulation."
+      contents:
+        - plot_orbits
+        - plot_orbits_3d
+        - plot_system
+        - plot_system_3d
+        - animate_system
+        - animate_system_3d
+    - title: "pandas or polars"
+      desc: "Choose the kind of DataFrame pyorbiter returns."
+      contents:
+        - set_backend
+        - get_backend
+        - run_settings
+    - title: "Save and export"
+      desc: "Save systems and export body data."
+      contents:
+        - save_system
+        - load_system
+        - export_bodies

@@ -1,0 +1,285 @@
+---
+title: "The Physics"
+description: "Newtonian gravity, the N-body equations of motion, the three integrators, softening, and the numpy kernel that pyorbiter uses to step a system forward in time."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+This article describes what [`simulate_system()`](../reference/simulate_system.qmd) does on every time step: the force law, the three ways of stepping it forward, and how the calculation is written in numpy.
+
+## Gravitational acceleration
+
+Every body in the system attracts every other body according to Newton's law of universal gravitation. For body $j$, the net acceleration due to all other bodies $k$ is
+
+$$\vec{a}_j = \sum_{k \neq j} \frac{G \, m_k}{r_{jk}^2} \, \hat{r}_{jk}$$
+
+where $r_{jk} = \lvert\vec{r}_k - \vec{r}_j\rvert$ is the distance between the two bodies and $\hat{r}_{jk}$ is the unit vector pointing from $j$ toward $k$. The mass of body $j$ itself does not appear: a feather and a planet at the same place fall the same way.
+
+Together with $\dot{\vec{r}}_j = \vec{v}_j$ and $\dot{\vec{v}}_j = \vec{a}_j$, this is the full set of N-body equations of motion. For $n$ bodies in three dimensions that is $6n$ coupled first-order equations, and every one of the $n(n-1)/2$ pairs contributes. Two bodies can be solved with pencil and paper. Three or more cannot in general, so the equations are integrated numerically.
+
+The function that evaluates the sum is exported as [`calc_acceleration()`](../reference/calc_acceleration.qmd). It takes an array of positions with one row per body and an array of masses, and returns one row of acceleration per body. Here are the Earth and the Moon, one mean lunar distance apart on the x axis:
+
+```{python}
+import numpy as np
+import pyorbiter as orb
+
+pos = np.array([[0.0, 0.0, 0.0],
+                [orb.distance_earth_moon, 0.0, 0.0]])
+mass = np.array([orb.mass_earth, orb.mass_moon])
+
+orb.calc_acceleration(pos, mass, orb.gravitational_constant)
+```
+
+The first row is the Earth, pulled in the $+x$ direction toward the Moon at about $3.3 \times 10^{-5}$ m/s². The second row is the Moon, pulled in the $-x$ direction toward the Earth at about $2.7 \times 10^{-3}$ m/s². The forces on the two bodies are equal and opposite, so the accelerations differ by the ratio of the masses, about 81.
+
+## Why initial velocity matters
+
+Gravity alone pulls every body straight toward every other body. What keeps them from colliding is their initial velocity: the sideways motion that turns a free fall into a curved orbit. This is the same reason the Moon does not crash into the Earth. It is falling toward us all the time, but it is also moving sideways fast enough that it keeps missing.
+
+When you call [`add_body()`](../reference/OrbitSystem.add_body.qmd), the `vx`, `vy`, `vz` arguments set this initial velocity. The balance between speed and distance determines the shape of the orbit. At a distance $r$ from a central mass $M$, the circular orbit speed is
+
+$$v_{\text{circ}} = \sqrt{\frac{G \, M}{r}}$$
+
+If the body's speed matches this exactly, and is at right angles to the line to the central mass, it traces a circle. Faster and the orbit stretches into an ellipse, or the body escapes entirely if $v \geq \sqrt{2} \, v_{\text{circ}}$. Slower and the orbit drops into a tighter ellipse that dips closer to the central body. With zero velocity, the body falls straight in.
+
+The example used later in this article is a planet $10^{11}$ m from a $10^{30}$ kg star, launched sideways at 30 km/s:
+
+```{python}
+M = 1e30
+r = 1e11
+
+v_circ = np.sqrt(orb.gravitational_constant * M / r)
+v_escape = np.sqrt(2) * v_circ
+print(f"circular: {v_circ:.0f} m/s   escape: {v_escape:.0f} m/s")
+```
+
+A speed of 30,000 m/s sits between the two, so the orbit is an ellipse with its closest point at the starting position. [`get_orbital_elements()`](../reference/get_orbital_elements.qmd) confirms it. A run of zero duration records just the initial state, which is all it needs:
+
+```{python}
+system = (
+    orb.create_system()
+    .add_body("Star", mass=1e30)
+    .add_body("Planet", mass=1e24, x=1e11, vy=30000)
+)
+
+start = system.simulate(duration=0)
+orb.get_orbital_elements(start, "Planet", "Star")[["a", "e", "nu", "period"]]
+```
+
+The eccentricity is about 0.35 and the period is $4.62 \times 10^{7}$ s, a little under a year and a half.
+
+## Gravitational softening
+
+When two bodies pass very close, $r \to 0$ and the acceleration grows without limit. A finite time step cannot follow that, and one bad step can throw a body out of the system at an unphysical speed. This is a well-known problem in N-body codes. `pyorbiter` offers an optional softening length $\varepsilon$ that replaces the separation in the force law by
+
+$$r_{\text{soft}} = \sqrt{r^2 + \varepsilon^2}$$
+
+so that the acceleration of body $j$ becomes
+
+$$\vec{a}_j = G \sum_{k \neq j} m_k \, \frac{\vec{r}_k - \vec{r}_j}{\left(r_{jk}^2 + \varepsilon^2\right)^{3/2}}$$
+
+Far apart, where $r \gg \varepsilon$, nothing changes. Closer than $\varepsilon$, the force stops growing and then falls to zero as the bodies overlap. The table below shows the acceleration of one $10^{30}$ kg star toward another at a range of separations, with exact gravity and with a softening length of $10^{8}$ m:
+
+```{python}
+import pandas as pd
+
+mass = np.array([1e30, 1e30])
+rows = []
+for separation in [1e10, 1e9, 1e8, 1e7, 1e6]:
+    pos = np.array([[0.0, 0.0, 0.0], [separation, 0.0, 0.0]])
+    exact = orb.calc_acceleration(pos, mass, orb.gravitational_constant)
+    soft = orb.calc_acceleration(pos, mass, orb.gravitational_constant, softening=1e8)
+    rows.append({"separation": separation, "exact": exact[0, 0], "softened": soft[0, 0]})
+
+pd.DataFrame(rows)
+```
+
+At $10^{10}$ m the two columns agree to within 0.02 percent. At $10^{8}$ m, where the separation equals the softening length, the softened pull is smaller by a factor of $2^{3/2} \approx 2.8$. Inside that, the exact acceleration keeps climbing by a factor of 100 for every factor of 10 in distance, while the softened one falls.
+
+Set `softening=0` (the default) for exact Newtonian gravity, or try something like `softening=1e4` (10 km) for dense systems. Softening changes the force law, so a softened run is a slightly different physical system. [`get_energy()`](../reference/get_energy.qmd) uses the softening recorded with the run, so the energy it reports is the one that run conserves.
+
+## Numerical integration methods
+
+`simulate_system()` offers three methods for stepping the system forward through time. All of them work in 3D Cartesian coordinates, advance every body by the same fixed step $\Delta t$ (the `time_step` argument), and record the state after every step. There are no hidden substeps.
+
+### 1. Velocity Verlet (default, `method="verlet"`)
+
+A second-order symplectic integrator. Its energy error oscillates within a bound instead of growing, which makes it the standard choice for orbital mechanics. Orbits stay closed and stable over long runs.
+
+$$\vec{x}_{t+\Delta t} = \vec{x}_t + \vec{v}_t \, \Delta t + \tfrac{1}{2} \vec{a}_t \, \Delta t^2$$
+
+$$\vec{v}_{t+\Delta t} = \vec{v}_t + \tfrac{1}{2} \left( \vec{a}_t + \vec{a}_{t+\Delta t} \right) \Delta t$$
+
+The position is advanced first, then the acceleration is recalculated at the new position, and finally the velocity is updated using the average of the old and new accelerations. The formula uses two accelerations, but the new one is kept and reused as the old one on the next step, so there is only one force calculation per step.
+
+### 2. Euler-Cromer (`method="euler_cromer"`)
+
+A first-order symplectic method. It updates velocity first, then uses the *new* velocity to update position. This small reordering prevents the systematic energy drift of standard Euler:
+
+$$\vec{v}_{t+\Delta t} = \vec{v}_t + \vec{a}_t \, \Delta t$$
+
+$$\vec{x}_{t+\Delta t} = \vec{x}_t + \vec{v}_{t+\Delta t} \, \Delta t$$
+
+It costs the same as Verlet, one force calculation per step, and is less accurate at the same step. It is useful mainly for comparison.
+
+### 3. Standard Euler (`method="euler"`)
+
+The classical textbook method. Position and velocity are both updated using values from the *current* time step:
+
+$$\vec{x}_{t+\Delta t} = \vec{x}_t + \vec{v}_t \, \Delta t$$
+
+$$\vec{v}_{t+\Delta t} = \vec{v}_t + \vec{a}_t \, \Delta t$$
+
+This artificially pumps energy into the system, so orbits spiral outward over time. It is included for teaching, to show what goes wrong. Use Verlet for real work.
+
+### Comparing the three methods
+
+Here is the star and planet from above, run for three years with a one-day step by each method. The step is deliberately coarse so that the differences are visible.
+
+```{python}
+import matplotlib.pyplot as plt
+
+labels = {"verlet": "Velocity Verlet", "euler_cromer": "Euler-Cromer", "euler": "Standard Euler"}
+
+runs = {}
+for method in labels:
+    runs[method] = system.simulate(
+        time_step=orb.seconds_per_day,
+        duration=3 * orb.seconds_per_year,
+        method=method,
+    )
+
+fig, ax = plt.subplots(figsize=(7, 7))
+for method, sim in runs.items():
+    planet = sim[sim["id"] == "Planet"]
+    ax.plot(planet["x"], planet["y"], label=labels[method], alpha=0.8)
+ax.set_aspect("equal")
+ax.set_xlabel("x (m)")
+ax.set_ylabel("y (m)")
+ax.legend();
+```
+
+Three years is about two orbits. Verlet retraces the same ellipse on the second pass. Euler-Cromer stays close to it, but its ellipse turns slowly in its own plane. Standard Euler spirals outward as it pumps energy into the orbit.
+
+The orbital elements at the end of each run put numbers on this. The semi-major axis `a` started at $1.535 \times 10^{11}$ m in all three:
+
+```{python}
+rows = []
+for method, sim in runs.items():
+    last = orb.get_orbital_elements(sim, "Planet", "Star").iloc[-1]
+    error = orb.conserved_quantities(sim)["energy_error"].abs().max()
+    rows.append({"method": method, "a": last["a"], "e": last["e"],
+                 "arg_pe": last["arg_pe"], "max_energy_error": error})
+
+pd.DataFrame(rows)
+```
+
+Verlet ends with `a` within 0.01 percent of where it began. Euler-Cromer is off by about half a percent, and its periapsis has rotated by about half a degree (`arg_pe`). Standard Euler has inflated the orbit by a third and changed the total energy by 25 percent. The [Conservation checks](conservation.qmd) article looks at these errors in detail, including how they shrink with the time step.
+
+## Keplerian orbital elements
+
+Everything above describes how `pyorbiter` *simulates*: stepping positions and velocities forward using Newton's law. There is an older description of orbits that predates Newton by decades: Kepler's laws. Johannes Kepler showed in 1609 that planetary orbits are ellipses with the Sun at one focus, and that the line from the Sun to a planet sweeps out equal areas in equal times. These geometric properties lead to a compact way of describing any orbit with six numbers, the Keplerian orbital elements.
+
+The six elements split into three groups.
+
+**Shape**: how big and how stretched is the ellipse?
+
+- **Semi-major axis** ($a$): half the longest diameter of the ellipse. It sets the orbital period through Kepler's third law, $T = 2\pi\sqrt{a^3 / \mu}$, where $\mu = GM$ is the gravitational parameter of the parent body.
+- **Eccentricity** ($e$): how elongated the ellipse is. $e = 0$ is a circle and $0 < e < 1$ is an ellipse. At any point, the distance from the parent is $r = a(1-e^2)/(1 + e\cos\nu)$.
+
+**Orientation**: how is the ellipse tilted and rotated in 3D space?
+
+- **Inclination** ($i$): the angle between the orbital plane and the reference plane, which is the x-y plane of the simulation (the ecliptic for solar system orbits). $0°$ is flat and $90°$ is a polar orbit.
+- **Longitude of ascending node** ($\Omega$): the direction the tilt points. It is measured from the x axis to the point where the orbit crosses the reference plane going upward.
+- **Argument of periapsis** ($\omega$): the angle within the orbital plane from the ascending node to the closest-approach point. It rotates the ellipse around the parent within its own plane.
+
+**Position**: where is the body right now?
+
+- **True anomaly** ($\nu$): the angle from periapsis to the body's current position along the orbit. $0°$ is at periapsis (closest) and $180°$ is at apoapsis (farthest).
+
+### From elements to Cartesian state vectors
+
+The simulation works entirely in Cartesian coordinates: positions $(x, y, z)$ and velocities $(v_x, v_y, v_z)$. The method [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd) converts Keplerian elements to Cartesian through a standard three-step procedure.
+
+**Step 1: solve the orbit equation in the orbital plane.** The distance from the parent at true anomaly $\nu$ is
+
+$$r = \frac{a(1-e^2)}{1 + e\cos\nu}$$
+
+The position in the perifocal frame (a coordinate system where the x axis points toward periapsis and the y axis is 90° ahead in the direction of motion) is
+
+$$x_{\text{pf}} = r\cos\nu, \quad y_{\text{pf}} = r\sin\nu$$
+
+**Step 2: compute the velocity.** The specific angular momentum $h = \sqrt{\mu a(1 - e^2)}$ gives the velocity components in the perifocal frame:
+
+$$v_{x,\text{pf}} = -\frac{\mu}{h}\sin\nu, \quad v_{y,\text{pf}} = \frac{\mu}{h}(e + \cos\nu)$$
+
+These follow from conservation of angular momentum ($h = r v_\perp$) and the vis-viva equation $v^2 = \mu(2/r - 1/a)$.
+
+**Step 3: rotate into the inertial frame.** Three rotations carry the perifocal frame into the simulation's frame:
+
+$$R = R_z(\Omega) \, R_x(i) \, R_z(\omega)$$
+
+Reading from the right, the orbit is first turned by $\omega$ about the z axis to set the direction of periapsis within the plane, then tilted by $i$ about the x axis to incline the plane, and finally turned by $\Omega$ about the z axis to orient the line of nodes. The resulting position and velocity are added to the parent body's state to get absolute coordinates.
+
+You can check the conversion against the example above. The planet starts at periapsis, so $\nu = 0$, with the `a` and `e` reported by `get_orbital_elements()`:
+
+```{python}
+elements = orb.get_orbital_elements(start, "Planet", "Star").iloc[0]
+
+(
+    orb.create_system()
+    .add_body("Star", mass=1e30)
+    .add_body_keplerian("Planet", mass=1e24, a=elements["a"], e=elements["e"], parent="Star")
+    .get_bodies()
+)
+```
+
+The planet comes back at $x = 10^{11}$ m with $v_y = 30{,}000$ m/s, the state it was created with.
+
+### Kepler's laws and the simulation
+
+The Keplerian description is exact for the two-body problem. A single planet orbiting a single star follows the same ellipse forever, and the elements are constants of the motion.
+
+In an N-body simulation the elements are only approximate, because the gravitational pulls of the other bodies perturb the orbit. Jupiter tugs slightly on Earth, Mars tugs slightly on Venus, and so on. Over long timescales these perturbations make the elements drift: $\omega$ precesses, $e$ oscillates, inclinations wobble. This is real physics. Most of the observed precession of Mercury's perihelion comes from the pull of the other planets, and the small remainder that Newtonian gravity could not account for was one of the first tests of general relativity.
+
+The Keplerian elements in [`add_planet()`](../reference/OrbitSystem.add_planet.qmd) and [`load_solar_system()`](../reference/load_solar_system.qmd) define the *initial conditions* at the start of the simulation. Once `simulate_system()` takes over, the full N-body dynamics handles the perturbations.
+
+For a walkthrough of each element with visual examples, see the [Keplerian elements](keplerian-elements.qmd) article.
+
+## The numpy kernel
+
+The acceleration calculation is the bottleneck of any N-body simulation, because it visits every pair of bodies on every step. `pyorbiter` does it in `calc_acceleration()` without a Python loop over bodies. The whole calculation is four array operations:
+
+1. **Separations.** Broadcasting the `(n, 3)` position array against itself gives an `(n, n, 3)` array `d`, where `d[j, k]` is the vector from body $j$ to body $k$.
+2. **Squared distances.** Summing the squares of the three components gives an `(n, n)` array of $r_{jk}^2$, and $\varepsilon^2$ is added to every entry.
+3. **Self-interaction.** The diagonal, which holds each body's distance to itself, is set to infinity, so those terms contribute nothing. Any other pair at exactly zero separation (two bodies at the same point with no softening) is treated the same way, so the result never contains a division by zero.
+4. **Sum.** Each separation vector is weighted by $m_k / r_{jk}^3$ and the weighted vectors are summed over $k$, then multiplied by $G$.
+
+The function is short enough to write out. This version gives the same numbers as the one in the package:
+
+```{python}
+def acceleration(pos, mass, G, softening=0.0):
+    d = pos[None, :, :] - pos[:, None, :]          # d[j, k] points from j to k
+    r2 = (d**2).sum(axis=2) + softening**2
+    np.fill_diagonal(r2, np.inf)                   # a body does not pull on itself
+    r2[r2 == 0] = np.inf                           # nor do two coincident bodies
+    w = mass[None, :] / (r2 * np.sqrt(r2))         # m_k / r^3
+    return G * (w[:, :, None] * d).sum(axis=1)
+
+solar_system = orb.load_solar_system().get_bodies()
+pos = solar_system[["x", "y", "z"]].to_numpy()
+mass = solar_system["mass"].to_numpy()
+
+np.allclose(
+    acceleration(pos, mass, orb.gravitational_constant),
+    orb.calc_acceleration(pos, mass, orb.gravitational_constant),
+)
+```
+
+The work and the memory both grow as $n^2$, since the arrays hold one entry per ordered pair of bodies. For the handful of bodies in a planetary system this is small. The loop over time steps is an ordinary Python loop that calls the kernel once per step and applies the update formulas above to whole arrays at a time. All three integrators make one kernel call per step, so they cost the same, and the run time is proportional to `duration / time_step`.
+
+Because `calc_acceleration()` is exported, you can also build an integrator of your own on top of it and compare it with the built-in ones.

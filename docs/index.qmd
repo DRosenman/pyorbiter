@@ -1,0 +1,103 @@
+---
+title: "pyorbiter"
+description: "A tidy N-body physics engine for building and visualizing orbital simulations in Python."
+toc: true
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+`pyorbiter` is a lightweight N-body gravitational simulator. Build a system of bodies, integrate it forward in time, and get back a tidy DataFrame with one row per body per time step. Simulate planetary orbits, binary stars, or chaotic three-body problems in a few lines of chained method calls.
+
+Units are SI throughout: meters, kilograms, seconds. Angles are in degrees.
+
+## Installation
+
+`pyorbiter` is not on PyPI yet. Install it from GitHub:
+
+```bash
+pip install "git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+It needs Python 3.10 or later, and installs numpy, pandas, and matplotlib. Three optional extras add interactive 3D plots (plotly), polars DataFrames, and GIF export (pillow):
+
+```bash
+pip install "pyorbiter[plotly,polars,gif] @ git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+## A few lines to an orbit
+
+For the Sun and the planets, `add_sun()` and `add_planet()` fill in real masses and orbital elements for you:
+
+```{python}
+import pyorbiter as orb
+
+sim = (
+    orb.create_system()
+    .add_sun()
+    .add_planet("Earth", parent="Sun")
+    .add_planet("Mars", parent="Sun")
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year * 2)
+)
+
+orb.plot_orbits(sim, three_d=False);
+```
+
+The result is an ordinary DataFrame. Each row is one body at one moment:
+
+```{python}
+sim.head()
+```
+
+`load_solar_system()` builds the whole solar system in one call, and `remove_body()` drops what you do not need:
+
+```{python}
+inner = (
+    orb.load_solar_system()
+    .remove_body(["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Moon"])
+    .simulate(time_step=orb.seconds_per_day, duration=orb.seconds_per_year)
+)
+
+orb.plot_orbits(inner, three_d=False);
+```
+
+You can also give positions and velocities yourself with `add_body()`. That is the way to build custom or fictional systems:
+
+```{python}
+earth_moon = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+orb.plot_system(earth_moon, time=7 * orb.seconds_per_day, trails=True);
+```
+
+## Features
+
+- **Tidy output.** `simulate()` returns a DataFrame with one row per body per time step and columns `id`, `mass`, `x`, `y`, `z`, `vx`, `vy`, `vz`, `time`. See the [Quick Start](articles/quick-start.qmd).
+- **pandas or polars.** Results are pandas DataFrames by default. Call `orb.set_backend("polars")`, or pass `backend="polars"` to a single call, to get polars DataFrames instead. Every function accepts either kind. See [pandas or polars](articles/pandas-or-polars.qmd).
+- **Built-in physical constants.** Masses, distances, and orbital speeds for the Sun, the eight planets, the Moon, and Pluto. See [Physical Constants](articles/physical-constants.qmd).
+- **Cartesian or Keplerian input.** Place a body by position and velocity with `add_body()`, or by orbital elements with `add_body_keplerian()`. See [Building Two-Body Orbits](articles/building-two-body-orbits.qmd) and [Keplerian Elements](articles/keplerian-elements.qmd).
+- **Three integrators.** Velocity Verlet (the default), Euler-Cromer, and explicit Euler for comparison. See [The Physics](articles/the-physics.qmd).
+- **Conservation checks.** `conserved_quantities()` reports energy, momentum, and angular momentum at every step, with their relative errors. See [Conservation](articles/conservation.qmd).
+- **Reference frames.** `shift_reference_frame(sim, "Earth")` re-centers a simulation on any body or on the barycenter. See [Reference Frames](articles/reference-frames.qmd).
+- **2D and 3D plotting.** `plot_orbits()` draws a matplotlib plot for planar motion and an interactive plotly figure when any body moves in `z`. See [3D Plotting](articles/plotting-3d.qmd) and [Custom Visualization](articles/custom-visualization.qmd).
+- **Animations.** `animate_system()` plays a simulation forward and can save it as a GIF.
+
+## Learn more
+
+- [Quick Start](articles/quick-start.qmd): install, simulate, and plot your first orbit.
+- [Examples](articles/examples.qmd): worked systems, from Earth and Moon to binary stars.
+- [Unstable Orbits](articles/unstable-orbits.qmd): why most random configurations fall apart.
+- [Function reference](reference/index.qmd): every function and method.
+- [Coming from R](articles/coming-from-r.qmd): a map from orbitr to pyorbiter.
+- [Further Reading](articles/further-reading.qmd): books and other resources.
+
+## The R sibling
+
+`pyorbiter` is the Python sibling of the R package [orbitr](https://orbit-r.com). The two share function names, argument names, constants, and defaults, and the pyorbiter test suite checks its results against numbers produced by orbitr. If you work in both languages, what you learn in one carries over to the other.

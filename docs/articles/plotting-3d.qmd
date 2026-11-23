@@ -1,0 +1,138 @@
+---
+title: "3D Plotting"
+description: "How pyorbiter chooses between a 2D matplotlib plot and an interactive 3D plotly figure, and how to make that choice yourself."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+```{python}
+import numpy as np
+import pyorbiter as orb
+```
+
+All simulations in `pyorbiter` run in full 3D. Every body always has `x`, `y`, and `z` coordinates. When all motion happens in the xy plane (`z = 0` and `vz = 0` for every body), [`plot_orbits()`](../reference/plot_orbits.qmd) draws a static 2D matplotlib plot. As soon as any body has a non-zero `z`, `plot_orbits()` switches to an interactive 3D plotly figure. No code changes are needed.
+
+You can also force 3D rendering for planar data with `three_d=True`. This is useful if you want to rotate and zoom a flat system.
+
+The 3D plots need plotly, which is an optional dependency. It comes with the `plotly` extra:
+
+```bash
+pip install "pyorbiter[plotly] @ git+https://github.com/DRosenman/pyorbiter.git"
+```
+
+## How the 2D/3D switch works
+
+`plot_orbits()` checks whether any value in the `z` column of the simulation is non-zero. If there is any motion along z, or if you pass `three_d=True`, it hands off to [`plot_orbits_3d()`](../reference/plot_orbits_3d.qmd), which builds a plotly figure. Otherwise it draws the 2D matplotlib plot.
+
+The `three_d` argument has three settings:
+
+| `three_d` | Result |
+|:--|:--|
+| `None` (the default) | 3D only if some `z` value is non-zero |
+| `True` | Always the 3D plotly figure |
+| `False` | Always the 2D matplotlib plot, which shows the projection onto the xy plane |
+
+The return value follows the plot. A 2D plot returns a matplotlib `Axes`. A 3D plot returns a plotly `Figure`.
+
+If plotly is not installed, `plot_orbits()` issues a warning and falls back to the 2D plot, even for 3D data. Calling `plot_orbits_3d()` directly without plotly raises an `ImportError` instead.
+
+[`plot_system()`](../reference/plot_system.qmd) and [`animate_system()`](../reference/animate_system.qmd) make the same choice in the same way, and take the same `three_d` argument. Their 3D counterparts are [`plot_system_3d()`](../reference/plot_system_3d.qmd) and [`animate_system_3d()`](../reference/animate_system_3d.qmd).
+
+## A tilted lunar orbit
+
+The Moon's real orbit is inclined about 5 degrees to the plane of Earth's orbit. You can approximate this by giving the Moon a small `vz` component:
+
+```{python}
+tilt = np.radians(5)
+
+sim = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon,
+              x=orb.distance_earth_moon,
+              vy=orb.speed_moon * np.cos(tilt),
+              vz=orb.speed_moon * np.sin(tilt))
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+orb.plot_orbits(sim)
+```
+
+Because `vz` is non-zero, `plot_orbits()` detects 3D motion and returns an interactive plotly figure. Drag to rotate, scroll to zoom, and hover over a line to see the body name and the time in days. The three axes share one scale, so the orbit keeps its true shape from any angle.
+
+You can confirm what came back:
+
+```{python}
+fig = orb.plot_orbits(sim)
+type(fig).__name__, len(fig.data)
+```
+
+The figure holds one `Scatter3d` line per body. It is an ordinary plotly figure, so `fig.update_layout()`, `fig.add_trace()`, and `fig.write_html("orbit.html")` all work on it. In a script, call `fig.show()` to open it in a browser.
+
+The same tilted orbit can be set up without any trigonometry. [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd) takes the inclination `i` in degrees, and [`add_planet()`](../reference/OrbitSystem.add_planet.qmd) uses each body's real inclination unless you override it. See [Keplerian elements](keplerian-elements.qmd) for details.
+
+## Forcing 3D for flat data
+
+Even if your system is entirely planar, you can ask for the interactive 3D viewer:
+
+```{python}
+flat = (
+    orb.create_system()
+    .add_body("Earth", mass=orb.mass_earth)
+    .add_body("Moon", mass=orb.mass_moon, x=orb.distance_earth_moon, vy=orb.speed_moon)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_day * 28)
+)
+
+orb.plot_orbits(flat, three_d=True)
+```
+
+This gives you the same rotation and zoom controls, even though every `z` value is zero. Calling `orb.plot_orbits_3d(flat)` directly does the same thing.
+
+## Forcing 2D for tilted data
+
+The switch works in the other direction too. `three_d=False` draws the matplotlib plot for any data. For the tilted lunar orbit this is the view from straight above the xy plane, with the motion along z flattened out:
+
+```{python}
+orb.plot_orbits(sim, three_d=False);
+```
+
+Use this when you need a static image for a report, or when you want to draw on the result with matplotlib. The trailing semicolon only stops a notebook from printing the returned `Axes`.
+
+## A snapshot in 3D
+
+`plot_system()` shows where every body is at one time instead of the whole trajectories. With tilted data it returns the plotly figure from `plot_system_3d()`. Here is the system 7 days in, with the full orbits drawn faintly behind the markers:
+
+```{python}
+orb.plot_system(sim, time=7 * orb.seconds_per_day, trails=True)
+```
+
+`time` is in seconds from the start of the simulation, and the closest recorded time step is used. Hover over a marker to see the body name, the time in days, and the coordinates in meters.
+
+Without `trails=True` the scene is fitted to the markers alone, so the view is tight around the bodies. With trails it covers the whole trajectories.
+
+## An animation in 3D
+
+`animate_system()` follows the same rule. For data with motion in z it returns the plotly figure from `animate_system_3d()`, which has Play and Pause buttons and a time slider labelled in days. You can rotate and zoom the scene while it plays.
+
+```{python}
+anim = orb.animate_system_3d(sim, fps=10, duration=4, trails=True)
+anim
+```
+
+`fps` and `duration` set the number of frames. About `fps * duration` evenly spaced time steps are drawn, so this animation has 40 frames taken from the 673 recorded time steps:
+
+```{python}
+len(anim.frames), sim["time"].nunique()
+```
+
+`duration` is seconds of playback, not of simulated time.
+
+The 3D animation is played by the browser. There is no image encoding, so the figure is built quickly even for many frames. The `path=` argument of `animate_system()`, which saves a GIF, applies only to the 2D matplotlib animation and is ignored in 3D. To save a 3D animation, write the figure to a standalone HTML file with `anim.write_html("orbit.html")`.
+
+## Going further
+
+The built-in 3D functions are meant to give a useful picture in one line. When you need something they do not cover, such as coloring a trajectory by speed, build the plotly figure yourself from the simulation DataFrame. [Custom visualization](custom-visualization.qmd) shows how.

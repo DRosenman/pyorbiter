@@ -1,0 +1,160 @@
+---
+title: "Unstable Orbits and the Three-Body Problem"
+description: "Why most configurations of three or more bodies are chaotic, what that looks like in a simulation, and how to tell real instability from numerical error."
+---
+
+```{python}
+#| include: false
+import matplotlib
+import pyorbiter as orb
+```
+
+If you start plugging in random masses and velocities, you will quickly discover that most configurations are wildly unstable. This is not a bug. It is physics. Stable orbits are the exception, not the rule.
+
+In a two-body system, stability is relatively easy to achieve: give the smaller body the right velocity at the right distance and it traces a clean ellipse forever. The moment you add a third body, things get chaotic. The three-body problem has no general closed-form solution. Small differences in initial conditions lead to very different outcomes, including bodies being flung far from the others or out of the system entirely.
+
+## A chaotic triple-star system
+
+Here is an example: three equal-mass stars arranged in a triangle with slightly asymmetric velocities. It starts off looking like an orderly dance, but the asymmetry compounds.
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+import pyorbiter as orb
+
+three_body = (
+    orb.create_system()
+    .add_body("Star A", mass=1e30, x=1e11, y=0, vx=0, vy=15000)
+    .add_body("Star B", mass=1e30, x=-5e10, y=8.66e10, vx=-12990, vy=-7500)
+    .add_body("Star C", mass=1e30, x=-5e10, y=-8.66e10, vx=14000, vy=-8000)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year * 3)
+)
+
+orb.plot_orbits(three_body);
+```
+
+The static plot is hard to read: three crossed paths with no sense of *when* anything happens. Animating it makes the chaos legible. [`animate_system()`](../reference/animate_system.qmd) plays the run forward, and `path=` saves it as a GIF:
+
+```{python}
+#| output: false
+orb.animate_system(three_body, fps=8, duration=5, trails=True,
+                   path="unstable-orbits-three-body.gif")
+```
+
+![](unstable-orbits-three-body.gif)
+
+Within the first half year, Star A and Star C capture each other into a tight pair, and Star B is thrown out onto a wide loop. The distances between the stars at the end of the run show the split:
+
+```{python}
+def separation(sim, first, second):
+    """Distance between two bodies at every time step, indexed by time in days."""
+    a = sim[sim["id"] == first].set_index("time")
+    b = sim[sim["id"] == second].set_index("time")
+    distance = np.sqrt((a["x"] - b["x"])**2 + (a["y"] - b["y"])**2 + (a["z"] - b["z"])**2)
+    distance.index = distance.index / orb.seconds_per_day
+    return distance
+
+pairs = [("Star A", "Star C"), ("Star A", "Star B"), ("Star B", "Star C")]
+for first, second in pairs:
+    d = separation(three_body, first, second)
+    print(f"{first} to {second}: start {d.iloc[0]:.3g} m, end {d.iloc[-1]:.3g} m, closest {d.min():.3g} m")
+```
+
+All three stars began $1.73 \times 10^{11}$ m apart. Three years later A and C are $4.7 \times 10^{10}$ m from each other, and B is about ten times farther from either of them.
+
+This is what happens in real stellar dynamics. Close three-body encounters in star clusters tend to leave two of the stars in a tighter binary and send the third away at high speed, carrying off the energy the binary gave up. When the third star leaves fast enough to escape for good, the process is called gravitational slingshot ejection.
+
+Star B's first loop takes it out and back by about day 900, where a second close encounter throws it out again, harder. Whether it has escaped this time is not something the picture can tell you. [`continue_simulation()`](../reference/continue_simulation.qmd) extends the run by another three years from where it stopped:
+
+```{python}
+longer = orb.continue_simulation(three_body, time_step=orb.seconds_per_hour,
+                                 duration=orb.seconds_per_year * 3)
+
+orb.plot_orbits(longer);
+```
+
+Star B turns around near day 1750, about $5.8 \times 10^{11}$ m from the center of mass, and starts to fall back. It was thrown onto a wide orbit, not out of the system, and each return to the inner pair is a new close encounter with a new outcome. Systems like this can go through many such excursions before one of them finally exceeds the escape speed.
+
+## Sensitivity to initial conditions
+
+The defining property of chaos is that tiny changes grow. To see it, run the same six years again with one number changed: Star C's initial `vx` is raised from 14,000 to 14,001 m/s, a change of less than one part in ten thousand.
+
+```{python}
+nudged = (
+    orb.create_system()
+    .add_body("Star A", mass=1e30, x=1e11, y=0, vx=0, vy=15000)
+    .add_body("Star B", mass=1e30, x=-5e10, y=8.66e10, vx=-12990, vy=-7500)
+    .add_body("Star C", mass=1e30, x=-5e10, y=-8.66e10, vx=14001, vy=-8000)
+    .simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year * 6)
+)
+
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.plot(separation(longer, "Star A", "Star C"), label="vx = 14000 m/s")
+ax.plot(separation(nudged, "Star A", "Star C"), label="vx = 14001 m/s", alpha=0.8)
+ax.set_xlabel("Time (days)")
+ax.set_ylabel("Distance from Star A to Star C (m)")
+ax.legend();
+```
+
+The regular beat from about day 150 onward is the A-C binary, closing and opening once per orbit. For two and a half years the two curves lie on top of each other. They part at around day 900, when Star B falls back and passes close to the pair: the two runs come out of that encounter with Star B on different orbits. In the original run it is thrown far out and is still on its way back when the six years end. In the nudged run it is thrown less far and returns around day 1800, and that extra encounter breaks up the A-C pair:
+
+```{python}
+for first, second in pairs:
+    d0 = separation(longer, first, second).iloc[-1]
+    d1 = separation(nudged, first, second).iloc[-1]
+    print(f"{first} to {second} after six years: {d0:.3g} m and {d1:.3g} m")
+```
+
+After six years the original run still has A and C as the close pair. In the nudged run it is Star A that is far from the other two, and B and C are the close pair. A change of 1 m/s changed when the next encounter came and how it ended.
+
+A two-body orbit given the same nudge would shift by a similar tiny fraction and stay there. Here the difference is amplified at every close encounter. This is why long-term predictions of chaotic systems are statistical: you can say what kinds of outcomes are likely, but not which one a given real system will follow, because its initial conditions are never known exactly.
+
+## Is it the physics or the integrator?
+
+A chaotic system also amplifies numerical error, so it is fair to ask whether a messy result is real. Two checks answer that.
+
+The first is energy conservation. [`conserved_quantities()`](../reference/conserved_quantities.qmd) reports the relative energy error at every step:
+
+```{python}
+checks = orb.conserved_quantities(three_body)
+checks["energy_error"].abs().max()
+```
+
+The total energy stays within seven parts in $10^5$ of its starting value through all the close encounters, which is good.
+
+The second is to halve the time step and see whether the answer changes:
+
+```{python}
+half_step = (
+    orb.create_system()
+    .add_body("Star A", mass=1e30, x=1e11, y=0, vx=0, vy=15000)
+    .add_body("Star B", mass=1e30, x=-5e10, y=8.66e10, vx=-12990, vy=-7500)
+    .add_body("Star C", mass=1e30, x=-5e10, y=-8.66e10, vx=14000, vy=-8000)
+    .simulate(time_step=orb.seconds_per_hour / 2, duration=orb.seconds_per_year * 3)
+)
+
+original_end = separation(three_body, "Star A", "Star C").iloc[-1]
+half_end = separation(half_step, "Star A", "Star C").iloc[-1]
+print(f"energy error: {orb.conserved_quantities(half_step)['energy_error'].abs().max():.2g}")
+print(f"final A to C distance: {half_end:.4g} m, compared with {original_end:.4g} m")
+```
+
+The energy error falls by a factor of four, as expected for the default velocity Verlet method, and the final separation changes by less than 0.1 percent. The hourly run has converged over these first three years. The scattering of Star B is the physics of these initial conditions, not an artifact.
+
+That will not stay true forever. The same amplification that separated the two runs in the previous section also acts on the integrator's small errors, so the longer a chaotic run goes on, the smaller the step it needs to stay on the true trajectory. See [Conservation checks](conservation.qmd) for more on reading these numbers.
+
+## Troubleshooting unstable simulations
+
+If your simulations are producing messy, diverging trajectories, here are a few things to check before assuming something is wrong.
+
+**Velocity too high or too low.** At a distance $r$ from a central mass $M$, the circular orbit speed is $v = \sqrt{GM/r}$. Deviating significantly from this produces eccentric orbits or escape trajectories. [`add_body_keplerian()`](../reference/OrbitSystem.add_body_keplerian.qmd) works out the right velocity for you from the size and shape of the orbit you want.
+
+**Bodies too close together.** Close encounters produce extreme accelerations that a fixed time step cannot follow. Try a smaller `time_step`, or set `softening` in [`simulate_system()`](../reference/simulate_system.qmd) to cap the force at short range.
+
+**Three or more bodies.** Chaos is the natural state of N-body systems. The stable examples in the documentation are carefully tuned. Do not expect random configurations to behave.
+
+**Time step too large.** If bodies move a significant fraction of their orbital radius in a single step, the integrator cannot track the orbit accurately. Halve `time_step` and see whether the result changes, as in the check above.
+
+**The wrong integrator.** `method="euler"` adds energy on every step and makes even a two-body orbit spiral outward. Keep the default `"verlet"` unless you are comparing methods. [The physics](the-physics.qmd) explains the difference.
+
+The built-in constants and examples in `pyorbiter` are designed to give you stable starting points. From there you can tweak parameters and watch how the system responds. That is where the real intuition for orbital mechanics comes from.

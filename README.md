@@ -2,7 +2,9 @@
 
 A tidy N-body physics engine for building and visualizing orbital simulations in Python.
 
-`pyorbiter` is the Python port of the [orbitr](https://orbit-r.com) R package. Build a system of bodies, integrate it forward in time, and get back a tidy DataFrame with one row per body per time step, ready for pandas or polars, matplotlib, or plotly.
+Build a system of bodies, integrate it forward in time, and get back a tidy DataFrame with one row per body per time step, ready for pandas or polars, matplotlib, or plotly. `pyorbiter` is the Python sibling of the [orbitr](https://orbit-r.com) R package.
+
+Full documentation, with a function reference and articles: <https://drosenman.github.io/pyorbiter/>.
 
 ```python
 import pyorbiter as orb
