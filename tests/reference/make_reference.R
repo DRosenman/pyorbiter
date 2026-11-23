@@ -1,5 +1,5 @@
 # Regenerates r_reference.json from the orbitr R package (>= 1.0.0).
-# pyorbitr's parity tests compare against these numbers.
+# pyorbiter's parity tests compare against these numbers.
 #   Rscript tests/reference/make_reference.R
 library(orbitr)
 

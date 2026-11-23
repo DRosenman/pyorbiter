@@ -1,9 +1,9 @@
-"""pyorbitr: a tidy N-body physics engine for orbital simulations.
+"""pyorbiter: a tidy N-body physics engine for orbital simulations.
 
 The Python port of the orbitr R package (https://orbit-r.com). Build a system,
 simulate it, and get back a tidy pandas DataFrame::
 
-    import pyorbitr as orb
+    import pyorbiter as orb
 
     sim = (
         orb.create_system()

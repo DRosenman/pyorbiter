@@ -1,4 +1,4 @@
-"""pyorbitr must reproduce the orbitr R package's numbers.
+"""pyorbiter must reproduce the orbitr R package's numbers.
 
 The reference values in reference/r_reference.json come from orbitr 1.0.0
 (regenerate with reference/make_reference.R).
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import pyorbitr as orb
+import pyorbiter as orb
 
 REF = json.loads((Path(__file__).parent / "reference" / "r_reference.json").read_text())
 STATE = ["x", "y", "z", "vx", "vy", "vz"]

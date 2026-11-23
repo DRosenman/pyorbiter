@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyorbitr"
+name = "pyorbiter"
 version = "0.1.0"
 description = "A tidy N-body physics engine for building and visualizing orbital simulations. The Python port of the orbitr R package."
 readme = "README.md"
@@ -39,7 +39,7 @@ Homepage = "https://orbit-r.com/"
 "R package" = "https://github.com/DRosenman/orbitr"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pyorbitr"]
+packages = ["src/pyorbiter"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

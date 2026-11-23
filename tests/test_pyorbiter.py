@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import pyorbitr as orb
+import pyorbiter as orb
 
 
 @pytest.fixture

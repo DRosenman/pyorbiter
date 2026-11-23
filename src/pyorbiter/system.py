@@ -304,7 +304,7 @@ def load_solar_system(moon: bool = True, pluto: bool = True) -> OrbitSystem:
 def save_system(system: OrbitSystem, path) -> OrbitSystem:
     """Write a system to a JSON file. Read it back with :func:`load_system`."""
     _check_system(system)
-    payload = {"format": "pyorbitr.orbit_system", "version": 1, "G": system.G,
+    payload = {"format": "pyorbiter.orbit_system", "version": 1, "G": system.G,
                "bodies": system._bodies.to_dict(orient="records")}
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
@@ -317,7 +317,9 @@ def load_system(path) -> OrbitSystem:
         raise FileNotFoundError(f"File not found: {path}")
     with open(path, encoding="utf-8") as fh:
         payload = json.load(fh)
-    if not isinstance(payload, dict) or payload.get("format") != "pyorbitr.orbit_system":
+    # "pyorbitr.orbit_system" is the format name from before the package was renamed.
+    formats = ("pyorbiter.orbit_system", "pyorbitr.orbit_system")
+    if not isinstance(payload, dict) or payload.get("format") not in formats:
         raise ValueError("The file does not contain an orbit system.")
     system = create_system(G=payload["G"])
     for body in payload["bodies"]:

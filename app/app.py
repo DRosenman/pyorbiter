@@ -1,4 +1,4 @@
-"""pyorbitr simulator: interactive N-body orbital simulations in Python.
+"""pyorbiter simulator: interactive N-body orbital simulations in Python.
 
 Run with:  shiny run app/app.py
 """
@@ -12,7 +12,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 from shiny import App, reactive, render, req, ui
 
-import pyorbitr as orb
+import pyorbiter as orb
 
 DAY = orb.seconds_per_day
 AU = orb.distance_earth_sun
@@ -282,7 +282,7 @@ def reproduce_code(params: dict) -> str:
     all_x = [b["x"] for b in cartesian]
     all_vy = [b["vy"] for b in cartesian]
 
-    lines = ["import pyorbitr as orb", "", "sim = (", "    orb.create_system()"]
+    lines = ["import pyorbiter as orb", "", "sim = (", "    orb.create_system()"]
     for b in s["bodies"]:
         if is_keplerian(b):
             # e > 1 with a < 0 is a hyperbolic orbit
@@ -452,9 +452,9 @@ pre, pre.shiny-text-output { background-color: #161b22 !important; color: #c9d1d
 """
 
 app_ui = ui.page_fluid(
-    ui.tags.head(ui.tags.title("pyorbitr"), ui.tags.style(CSS)),
+    ui.tags.head(ui.tags.title("pyorbiter"), ui.tags.style(CSS)),
     ui.div(
-        ui.h2("pyorbitr"),
+        ui.h2("pyorbiter"),
         ui.div("Interactive N-body orbital simulations in Python", class_="tagline"),
         class_="header-bar",
     ),
@@ -476,7 +476,7 @@ app_ui = ui.page_fluid(
                                    width="100%"),
             ui.div("Extends the last run (same scenario) by Duration (days), with the same time step "
                    "and integrator.", class_="sidebar-hint"),
-            ui.div(ui.HTML("Powered by <a href='https://orbit-r.com' target='_blank'>pyorbitr</a> "
+            ui.div(ui.HTML("Powered by <a href='https://orbit-r.com' target='_blank'>pyorbiter</a> "
                            f"{orb.__version__}"), class_="powered"),
             width=320, open="always",
         ),

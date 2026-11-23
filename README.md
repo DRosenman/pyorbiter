@@ -1,11 +1,11 @@
-# pyorbitr
+# pyorbiter
 
 A tidy N-body physics engine for building and visualizing orbital simulations in Python.
 
-`pyorbitr` is the Python port of the [orbitr](https://orbit-r.com) R package. Build a system of bodies, integrate it forward in time, and get back a tidy pandas DataFrame with one row per body per time step, ready for pandas, matplotlib, or plotly.
+`pyorbiter` is the Python port of the [orbitr](https://orbit-r.com) R package. Build a system of bodies, integrate it forward in time, and get back a tidy pandas DataFrame with one row per body per time step, ready for pandas, matplotlib, or plotly.
 
 ```python
-import pyorbitr as orb
+import pyorbiter as orb
 
 sim = (
     orb.create_system()
@@ -85,7 +85,7 @@ orb.animate_system(sim, path="orbit.gif")
 
 ## Coming from R
 
-| orbitr (R) | pyorbitr (Python) |
+| orbitr (R) | pyorbiter (Python) |
 |:--|:--|
 | `create_system() \|> add_body(...)` | `orb.create_system().add_body(...)` (or `orb.add_body(system, ...)`) |
 | `simulate_system(system, ...)` | `system.simulate(...)` or `orb.simulate_system(system, ...)` |
@@ -95,7 +95,7 @@ orb.animate_system(sim, path="orbit.gif")
 | ggplot2 / gganimate | matplotlib |
 | the C++ kernel (`use_cpp`) | a vectorized numpy kernel |
 
-Function names, argument names, constants, and defaults are otherwise the same. The test suite checks pyorbitr against numbers produced by orbitr 1.0.0 (`tests/reference/`); the two agree to about 8 significant figures or better.
+Function names, argument names, constants, and defaults are otherwise the same. The test suite checks pyorbiter against numbers produced by orbitr 1.0.0 (`tests/reference/`); the two agree to about 8 significant figures or better.
 
 ## The simulator app
 
