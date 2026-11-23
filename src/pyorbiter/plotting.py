@@ -7,6 +7,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from ._frames import accepts_frames
 from .constants import seconds_per_day
 
 
@@ -16,6 +17,7 @@ def _require_time(sim_data: pd.DataFrame) -> None:
                          "Did you pass the output of simulate_system()?")
 
 
+@accepts_frames
 def snapshot_at(sim_data: pd.DataFrame, time: float | None = None) -> pd.DataFrame:
     """Rows of the recorded time step closest to ``time`` (default: the last)."""
     _require_time(sim_data)
@@ -24,6 +26,7 @@ def snapshot_at(sim_data: pd.DataFrame, time: float | None = None) -> pd.DataFra
     return sim_data.loc[sim_data["time"] == target]
 
 
+@accepts_frames
 def downsample_frames(sim_data: pd.DataFrame, fps: float, duration: float) -> pd.DataFrame:
     """Thin a simulation to about ``fps * duration`` evenly spaced time steps."""
     _require_time(sim_data)
@@ -92,6 +95,7 @@ def _trail_traces(go, sim_data: pd.DataFrame) -> list:
 
 # ---- Trajectories ---------------------------------------------------------
 
+@accepts_frames
 def plot_orbits(sim_data: pd.DataFrame, three_d: bool | None = None, ax=None):
     """Plot the full trajectory of every body.
 
@@ -108,6 +112,7 @@ def plot_orbits(sim_data: pd.DataFrame, three_d: bool | None = None, ax=None):
     return _finish_axes(ax, "2D Orbital Trajectories")
 
 
+@accepts_frames
 def plot_orbits_3d(sim_data: pd.DataFrame):
     """Interactive 3D trajectories (requires plotly)."""
     go = _plotly()
@@ -126,6 +131,7 @@ def plot_orbits_3d(sim_data: pd.DataFrame):
 
 # ---- Snapshots ------------------------------------------------------------
 
+@accepts_frames
 def plot_system(sim_data: pd.DataFrame, time: float | None = None, trails: bool = False,
                 three_d: bool | None = None, ax=None):
     """Plot where every body is at one time (default: the last time step).
@@ -145,6 +151,7 @@ def plot_system(sim_data: pd.DataFrame, time: float | None = None, trails: bool 
     return _finish_axes(ax, f"System Snapshot (t = {snap['time'].iloc[0]:.3g} s)")
 
 
+@accepts_frames
 def plot_system_3d(sim_data: pd.DataFrame, time: float | None = None, trails: bool = False):
     """Interactive 3D snapshot (requires plotly)."""
     go = _plotly()
@@ -165,6 +172,7 @@ def plot_system_3d(sim_data: pd.DataFrame, time: float | None = None, trails: bo
 
 # ---- Animation ------------------------------------------------------------
 
+@accepts_frames
 def animate_system(sim_data: pd.DataFrame, fps: float = 20, duration: float = 10,
                    trails: bool = False, three_d: bool | None = None, path=None):
     """Animate the system.
@@ -215,6 +223,7 @@ def animate_system(sim_data: pd.DataFrame, fps: float = 20, duration: float = 10
     return anim
 
 
+@accepts_frames
 def animate_system_3d(sim_data: pd.DataFrame, fps: float = 20, duration: float = 10, trails: bool = False):
     """Interactive 3D animation with a play button and time slider (requires plotly)."""
     go = _plotly()

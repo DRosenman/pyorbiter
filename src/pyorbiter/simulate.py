@@ -6,15 +6,16 @@ import numpy as np
 import pandas as pd
 
 from . import constants as c
+from ._frames import accepts_frames, is_frame, resolve_backend, to_backend
 from .system import SIM_COLUMNS, OrbitSystem, _check_system, create_system
 
 METHODS = ("verlet", "euler_cromer", "euler")
 
 
 def check_sim_data(sim_data) -> None:
-    if not isinstance(sim_data, pd.DataFrame) or not set(SIM_COLUMNS) <= set(sim_data.columns):
+    if not is_frame(sim_data) or not set(SIM_COLUMNS) <= set(sim_data.columns):
         raise TypeError("`sim_data` must be the output of `simulate_system()` "
-                        "(a DataFrame with columns id, mass, x, y, z, vx, vy, vz, time).")
+                        "(a pandas or polars DataFrame with columns id, mass, x, y, z, vx, vy, vz, time).")
 
 
 def calc_acceleration(pos: np.ndarray, mass: np.ndarray, G: float, softening: float = 0.0) -> np.ndarray:
@@ -39,7 +40,7 @@ def calc_acceleration(pos: np.ndarray, mass: np.ndarray, G: float, softening: fl
 
 def simulate_system(system: OrbitSystem, time_step: float = c.seconds_per_hour,
                     duration: float = c.seconds_per_year, method: str = "verlet",
-                    softening: float = 0) -> pd.DataFrame:
+                    softening: float = 0, backend: str | None = None):
     """Integrate a system forward in time.
 
     Parameters
@@ -50,14 +51,19 @@ def simulate_system(system: OrbitSystem, time_step: float = c.seconds_per_hour,
         bounded), ``"euler_cromer"`` (semi-implicit Euler), or ``"euler"``
         (explicit Euler; energy drifts).
     softening : softening length in meters (default 0).
+    backend : ``"pandas"`` or ``"polars"``, the kind of DataFrame to return.
+        Defaults to the one chosen with :func:`set_backend` (pandas unless
+        you changed it).
 
     Returns
     -------
     A tidy DataFrame with one row per body per time step and columns
     ``id, mass, x, y, z, vx, vy, vz, time``. The run's ``G``, ``softening``,
-    ``method`` and ``time_step`` are recorded in ``DataFrame.attrs``.
+    ``method`` and ``time_step`` are recorded with it; read them back with
+    :func:`run_settings` (for pandas they are also in ``DataFrame.attrs``).
     """
     _check_system(system)
+    backend = resolve_backend(backend)
     if method not in METHODS:
         raise ValueError("Method must be 'verlet', 'euler_cromer', or 'euler'.")
     if not time_step > 0:
@@ -110,7 +116,7 @@ def simulate_system(system: OrbitSystem, time_step: float = c.seconds_per_hour,
         "time": np.repeat(times, n),
     })
     result.attrs.update(G=G, softening=softening, method=method, time_step=time_step)
-    return result
+    return to_backend(result, backend)
 
 
 def _run_setting(sim_data: pd.DataFrame, name: str, value, default):
@@ -120,6 +126,7 @@ def _run_setting(sim_data: pd.DataFrame, name: str, value, default):
     return sim_data.attrs.get(name, default)
 
 
+@accepts_frames
 def system_from_simulation(sim_data: pd.DataFrame, time: float | None = None,
                            G: float | None = None) -> OrbitSystem:
     """Rebuild a system from one time step of a run (default: the last).
@@ -139,6 +146,7 @@ def system_from_simulation(sim_data: pd.DataFrame, time: float | None = None,
     return system
 
 
+@accepts_frames
 def continue_simulation(sim_data: pd.DataFrame, time_step: float, duration: float,
                         G: float | None = None, method: str | None = None,
                         softening: float | None = None) -> pd.DataFrame:
@@ -146,7 +154,7 @@ def continue_simulation(sim_data: pd.DataFrame, time_step: float, duration: floa
 
     ``method``, ``softening`` and ``G`` default to those of the previous
     segment, so ``continue_simulation(sim, time_step, duration)`` simply
-    extends the run.
+    extends the run. The result is the same kind of DataFrame as ``sim_data``.
     """
     check_sim_data(sim_data)
     G = _run_setting(sim_data, "G", G, c.gravitational_constant)
@@ -156,7 +164,7 @@ def continue_simulation(sim_data: pd.DataFrame, time_step: float, duration: floa
     t0 = sim_data["time"].max()
     system = system_from_simulation(sim_data, time=t0, G=G)
     more = simulate_system(system, time_step=time_step, duration=duration,
-                           method=method, softening=softening)
+                           method=method, softening=softening, backend="pandas")
     more["time"] = more["time"] + t0
     more = more.loc[more["time"] > t0]
 

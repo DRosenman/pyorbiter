@@ -2,7 +2,7 @@
 
 A tidy N-body physics engine for building and visualizing orbital simulations in Python.
 
-`pyorbiter` is the Python port of the [orbitr](https://orbit-r.com) R package. Build a system of bodies, integrate it forward in time, and get back a tidy pandas DataFrame with one row per body per time step, ready for pandas, matplotlib, or plotly.
+`pyorbiter` is the Python port of the [orbitr](https://orbit-r.com) R package. Build a system of bodies, integrate it forward in time, and get back a tidy DataFrame with one row per body per time step, ready for pandas or polars, matplotlib, or plotly.
 
 ```python
 import pyorbiter as orb
@@ -24,10 +24,11 @@ From a clone of this repository:
 ```bash
 pip install -e .            # the package
 pip install -e ".[plotly]"  # plus interactive 3D plots
-pip install -e ".[dev]"     # plus pytest, plotly, pillow
+pip install -e ".[polars]"  # plus polars DataFrames
+pip install -e ".[dev]"     # plus pytest, plotly, pillow, polars
 ```
 
-Requires Python 3.10+, numpy, pandas, and matplotlib.
+Requires Python 3.10+, numpy, pandas, and matplotlib. polars is optional.
 
 ## A tour
 
@@ -57,7 +58,22 @@ sim = solar.simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_ye
 sim = orb.continue_simulation(sim, time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)
 ```
 
-`method` is `"verlet"` (velocity Verlet, the default), `"euler_cromer"`, or `"euler"`. `softening` tames close encounters. The result has columns `id, mass, x, y, z, vx, vy, vz, time`, and the run's `G`, `softening`, `method`, and `time_step` are kept in `sim.attrs`.
+`method` is `"verlet"` (velocity Verlet, the default), `"euler_cromer"`, or `"euler"`. `softening` tames close encounters. The result has columns `id, mass, x, y, z, vx, vy, vz, time`, and the run's `G`, `softening`, `method`, and `time_step` are kept in `sim.attrs` (or, for either kind of DataFrame, `orb.run_settings(sim)`).
+
+### pandas or polars
+
+Results are pandas DataFrames by default. To get polars DataFrames instead, install the extra (`pip install -e ".[polars]"`) and switch the backend once:
+
+```python
+orb.set_backend("polars")
+
+sim = solar.simulate(time_step=orb.seconds_per_hour, duration=orb.seconds_per_year)   # a polars DataFrame
+energy = orb.get_energy(sim)                                                           # also polars
+```
+
+Or ask for it in a single call with `backend="polars"` on `simulate()`, `simulate_system()`, or `get_bodies()`. Every function that takes a simulation (analysis, plotting, `continue_simulation()`) accepts either kind and returns the kind it was given, so the two can be mixed freely.
+
+A polars DataFrame has no `.attrs`, so pyorbiter remembers the run's settings for the exact DataFrame it returned; `orb.run_settings(sim)` shows them. A frame you derive yourself (`sim.filter(...)`, a join, a file you read back) no longer carries them, so pass `G` and `softening` to the analysis functions explicitly if the run did not use the defaults.
 
 ### Analyze
 
@@ -90,7 +106,7 @@ orb.animate_system(sim, path="orbit.gif")
 | `create_system() \|> add_body(...)` | `orb.create_system().add_body(...)` (or `orb.add_body(system, ...)`) |
 | `simulate_system(system, ...)` | `system.simulate(...)` or `orb.simulate_system(system, ...)` |
 | `sim \|> shift_reference_frame("Earth")` | `orb.shift_reference_frame(sim, "Earth")` or `sim.pipe(...)` |
-| a tibble with attributes | a pandas DataFrame with `.attrs` |
+| a tibble with attributes | a pandas DataFrame with `.attrs`, or a polars DataFrame |
 | `save_system()` writes `.rds` | `save_system()` writes JSON |
 | ggplot2 / gganimate | matplotlib |
 | the C++ kernel (`use_cpp`) | a vectorized numpy kernel |

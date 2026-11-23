@@ -26,13 +26,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# polars DataFrames instead of pandas ones
+polars = ["polars>=1.0"]
 # Interactive 3D plots and animations
 plotly = ["plotly>=5.0"]
 # Saving 2D animations as GIFs
 gif = ["pillow>=9.0"]
 # The Shiny simulator in app/
 app = ["shiny>=1.0"]
-dev = ["pytest>=7.0", "plotly>=5.0", "pillow>=9.0"]
+dev = ["pytest>=7.0", "plotly>=5.0", "pillow>=9.0", "polars>=1.0"]
 
 [project.urls]
 Homepage = "https://orbit-r.com/"

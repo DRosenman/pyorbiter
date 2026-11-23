@@ -12,6 +12,7 @@ from typing import Iterable
 import pandas as pd
 
 from . import constants as c
+from ._frames import to_backend
 
 BODY_COLUMNS = ["id", "mass", "x", "y", "z", "vx", "vy", "vz"]
 SIM_COLUMNS = BODY_COLUMNS + ["time"]
@@ -61,13 +62,20 @@ class OrbitSystem:
     # ---- inspection -----------------------------------------------------
 
     @property
-    def bodies(self) -> pd.DataFrame:
-        """The body table: one row per body, columns id, mass, x, y, z, vx, vy, vz."""
-        return self._bodies.copy()
+    def bodies(self):
+        """The body table: one row per body, columns id, mass, x, y, z, vx, vy, vz.
 
-    def get_bodies(self) -> pd.DataFrame:
-        """The body table as a DataFrame (a copy)."""
-        return self.bodies
+        A copy, as a pandas DataFrame unless :func:`set_backend` chose polars.
+        """
+        return self.get_bodies()
+
+    def get_bodies(self, backend: str | None = None):
+        """The body table as a DataFrame (a copy).
+
+        ``backend`` is ``"pandas"`` or ``"polars"``; it defaults to the one
+        chosen with :func:`set_backend`.
+        """
+        return to_backend(self._bodies.copy(), backend)
 
     def __len__(self) -> int:
         return len(self._bodies)
@@ -222,11 +230,11 @@ class OrbitSystem:
     # ---- running and saving ---------------------------------------------
 
     def simulate(self, time_step: float = c.seconds_per_hour, duration: float = c.seconds_per_year,
-                 method: str = "verlet", softening: float = 0) -> pd.DataFrame:
+                 method: str = "verlet", softening: float = 0, backend: str | None = None):
         """Integrate the system forward in time. See :func:`simulate_system`."""
         from .simulate import simulate_system
         return simulate_system(self, time_step=time_step, duration=duration,
-                               method=method, softening=softening)
+                               method=method, softening=softening, backend=backend)
 
     def save(self, path) -> "OrbitSystem":
         """Write the system to a JSON file. See :func:`save_system`."""
@@ -277,9 +285,9 @@ def remove_body(system: OrbitSystem, id: str | Iterable[str]) -> OrbitSystem:
     return system.remove_body(id)
 
 
-def get_bodies(system: OrbitSystem) -> pd.DataFrame:
+def get_bodies(system: OrbitSystem, backend: str | None = None):
     _check_system(system)
-    return system.bodies
+    return system.get_bodies(backend=backend)
 
 
 for _fn, _method in [(add_body, OrbitSystem.add_body), (add_sun, OrbitSystem.add_sun),

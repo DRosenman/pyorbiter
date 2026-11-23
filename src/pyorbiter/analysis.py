@@ -6,11 +6,13 @@ import numpy as np
 import pandas as pd
 
 from . import constants as c
+from ._frames import accepts_frames
 from .simulate import _run_setting, check_sim_data
 
 _STATE = ["x", "y", "z", "vx", "vy", "vz"]
 
 
+@accepts_frames
 def shift_reference_frame(sim_data: pd.DataFrame, center_id: str, keep_center: bool = True) -> pd.DataFrame:
     """Re-center a simulation on one body, or on the center of mass.
 
@@ -41,6 +43,7 @@ def shift_reference_frame(sim_data: pd.DataFrame, center_id: str, keep_center: b
     return out
 
 
+@accepts_frames
 def get_orbital_elements(sim_data: pd.DataFrame, body: str, parent: str,
                          mu: float | None = None, G: float | None = None) -> pd.DataFrame:
     """Osculating orbital elements of ``body`` about ``parent`` at every time step.
@@ -153,6 +156,7 @@ def _potential(sim_data: pd.DataFrame, G: float, softening: float) -> pd.Series:
     return pd.Series(values, index=times)
 
 
+@accepts_frames
 def get_energy(sim_data: pd.DataFrame, G: float | None = None, softening: float | None = None) -> pd.DataFrame:
     """Total kinetic, potential and mechanical energy (joules) at every time step.
 
@@ -170,6 +174,7 @@ def get_energy(sim_data: pd.DataFrame, G: float | None = None, softening: float 
                          "energy": kinetic.to_numpy() + potential.to_numpy()})
 
 
+@accepts_frames
 def get_momentum(sim_data: pd.DataFrame) -> pd.DataFrame:
     """Total linear momentum ``px, py, pz`` (kg m/s) at every time step."""
     check_sim_data(sim_data)
@@ -179,6 +184,7 @@ def get_momentum(sim_data: pd.DataFrame) -> pd.DataFrame:
     return parts.groupby("time", sort=True).sum().reset_index()
 
 
+@accepts_frames
 def get_angular_momentum(sim_data: pd.DataFrame) -> pd.DataFrame:
     """Total angular momentum ``Lx, Ly, Lz`` (kg m^2/s) about the origin at every time step."""
     check_sim_data(sim_data)
@@ -192,6 +198,7 @@ def get_angular_momentum(sim_data: pd.DataFrame) -> pd.DataFrame:
     return parts.groupby("time", sort=True).sum().reset_index()
 
 
+@accepts_frames
 def conserved_quantities(sim_data: pd.DataFrame, G: float | None = None,
                          softening: float | None = None) -> pd.DataFrame:
     """Energy, momentum and angular momentum at every step, with relative errors.

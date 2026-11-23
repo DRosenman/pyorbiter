@@ -1,7 +1,8 @@
 """pyorbiter: a tidy N-body physics engine for orbital simulations.
 
 The Python port of the orbitr R package (https://orbit-r.com). Build a system,
-simulate it, and get back a tidy pandas DataFrame::
+simulate it, and get back a tidy DataFrame (pandas by default, polars if you
+ask for it with ``orb.set_backend("polars")``)::
 
     import pyorbiter as orb
 
@@ -16,6 +17,7 @@ simulate it, and get back a tidy pandas DataFrame::
 Units are SI throughout: meters, kilograms, seconds. Angles are in degrees.
 """
 
+from ._frames import get_backend, run_settings, set_backend
 from .analysis import (
     conserved_quantities,
     get_angular_momentum,
@@ -60,5 +62,6 @@ __all__ = [
     "get_angular_momentum", "conserved_quantities",
     "plot_orbits", "plot_orbits_3d", "plot_system", "plot_system_3d",
     "animate_system", "animate_system_3d",
+    "set_backend", "get_backend", "run_settings",
     *_constants,
 ]
